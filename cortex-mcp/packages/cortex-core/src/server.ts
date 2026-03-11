@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 
-// Line 1: Block all outbound network — BEFORE any other imports
+// Block outbound network unless vector/hybrid mode needs model download
 import { blockOutboundNetwork } from './security/network-guard.js'
-blockOutboundNetwork()
+const searchMode = process.env.CORTEX_SEARCH_MODE ?? 'bm25'
+if (searchMode === 'bm25') {
+  blockOutboundNetwork()
+} else {
+  console.error(`[cortex] Network guard DISABLED for ${searchMode} mode (model download may be needed)`)
+}
 
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -21,18 +27,23 @@ import { TOOL_DEFINITIONS } from './mcp/tools.js'
 import { dispatch } from './mcp/dispatcher.js'
 import { setSavingsTracker } from './mcp/meta.js'
 import { SavingsTracker } from './token/savings.js'
-import type { HandlerContext } from './mcp/handlers.js'
+import type { HandlerContext, SearchMode } from './mcp/handlers.js'
+import type { Embedder } from './embeddings/local-embed.js'
+import { loadVec, insertVectors } from './retrieval/vector-search.js'
 
 const PROJECT_ROOT = path.resolve(process.cwd())
 const TOOL_VERSION = '1.0.0'
+const SEARCH_MODE = (process.env.CORTEX_SEARCH_MODE ?? 'bm25') as SearchMode
 
 /**
  * Try to load the Java parser. Returns null if not installed.
  */
 function loadJavaParser(): { parseFile: ParseFileFn; detectArch: DetectArchFn } | null {
   try {
-    // Dynamic import for optional dependency
-    const javaPkg = require('@cortex-ai/java')
+    // Use createRequire anchored to THIS file's location so workspace
+    // packages resolve correctly regardless of process.cwd()
+    const esmRequire = createRequire(import.meta.url)
+    const javaPkg = esmRequire('@cortex-ai/java')
     return {
       parseFile: javaPkg.parseJavaFile as ParseFileFn,
       detectArch: javaPkg.detectArchitecture as DetectArchFn,
@@ -100,6 +111,49 @@ async function main() {
     console.error(`[cortex] Error during startup indexing: ${err.message}`)
   }
 
+  // Initialize embedder for vector/hybrid modes
+  console.error(`[cortex] Search mode: ${SEARCH_MODE}`)
+  let embedder: Embedder | null = null
+
+  if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid') {
+    try {
+      const { getEmbedder, prepareSymbolText } = await import('./embeddings/local-embed.js')
+      console.error(`[cortex] Loading embedding model (first run downloads ~100MB)...`)
+      embedder = await getEmbedder()
+      console.error(`[cortex] Embedder ready (${embedder.dimensions} dimensions)`)
+
+      // Load sqlite-vec and build vector index
+      loadVec(db)
+      const allSymbols = db.prepare(
+        'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
+      ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]
+
+      if (allSymbols.length > 0) {
+        console.error(`[cortex] Building vector index for ${allSymbols.length} symbols...`)
+        const batchSize = 50
+        for (let i = 0; i < allSymbols.length; i += batchSize) {
+          const batch = allSymbols.slice(i, i + batchSize)
+          const texts = batch.map(s => prepareSymbolText({
+            qualifiedName: s.qualified_name,
+            signature: s.signature,
+            javadoc: s.javadoc,
+            kind: s.kind,
+          }))
+          const embeddings = await embedder.embedBatch(texts)
+          const vectors = batch.map((s, idx) => ({
+            symbolId: s.id,
+            embedding: embeddings[idx],
+          }))
+          insertVectors(db, vectors)
+        }
+        console.error(`[cortex] Vector index built for ${allSymbols.length} symbols`)
+      }
+    } catch (err: any) {
+      console.error(`[cortex] Failed to initialize embedder: ${err.message}`)
+      console.error(`[cortex] Falling back to BM25-only mode`)
+    }
+  }
+
   // Initialize savings tracker
   const savings = new SavingsTracker(safeFs)
   setSavingsTracker(savings)
@@ -111,6 +165,8 @@ async function main() {
     projectId: namespace,
     projectName,
     architecture,
+    searchMode: SEARCH_MODE,
+    embedder,
   }
 
   // Create MCP server

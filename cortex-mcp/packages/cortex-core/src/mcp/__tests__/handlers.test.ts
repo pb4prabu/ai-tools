@@ -97,6 +97,8 @@ describe('MCP handlers', () => {
       projectId: 'test@abc',
       projectName: 'test',
       architecture: 'hexagonal',
+      searchMode: 'bm25',
+      embedder: null,
     }
   })
 
@@ -151,15 +153,15 @@ describe('MCP handlers', () => {
   })
 
   describe('search_symbols', () => {
-    it('finds symbols by query', () => {
-      const result = handleSearchSymbols(ctx, { query: 'CreateOrderHandler' })
+    it('finds symbols by query', async () => {
+      const result = await handleSearchSymbols(ctx, { query: 'CreateOrderHandler' })
       const data = JSON.parse(result.content[0].text)
       expect(data.length).toBeGreaterThan(0)
       expect(data[0].qualifiedName).toContain('Order')
     })
 
-    it('filters by kind', () => {
-      const result = handleSearchSymbols(ctx, {
+    it('filters by kind', async () => {
+      const result = await handleSearchSymbols(ctx, {
         query: 'OrderRepository persisting',
         kind: 'interface',
       })
@@ -168,14 +170,14 @@ describe('MCP handlers', () => {
       expect(data[0].kind).toBe('interface')
     })
 
-    it('returns confidence gate message for no matches', () => {
-      const result = handleSearchSymbols(ctx, { query: 'xyznonexistent' })
+    it('returns confidence gate message for no matches', async () => {
+      const result = await handleSearchSymbols(ctx, { query: 'xyznonexistent' })
       expect(result.content[0].text).toContain('No symbols found')
       expect((result._meta as any).confidenceGateFired).toBe(true)
     })
 
-    it('includes _meta with token savings', () => {
-      const result = handleSearchSymbols(ctx, { query: 'order creation' })
+    it('includes _meta with token savings', async () => {
+      const result = await handleSearchSymbols(ctx, { query: 'order creation' })
       const meta = result._meta as any
       expect(meta).toBeDefined()
       expect(meta.symbolsReturned).toBeGreaterThan(0)
@@ -184,8 +186,8 @@ describe('MCP handlers', () => {
   })
 
   describe('get_context_for_task', () => {
-    it('assembles context within token budget', () => {
-      const result = handleGetContextForTask(ctx, {
+    it('assembles context within token budget', async () => {
+      const result = await handleGetContextForTask(ctx, {
         task: 'add validation to order creation',
         tokenBudget: 2000,
       })
@@ -194,8 +196,8 @@ describe('MCP handlers', () => {
       expect(data.tokensUsed).toBeLessThanOrEqual(2000)
     })
 
-    it('returns empty symbols when gate fires', () => {
-      const result = handleGetContextForTask(ctx, {
+    it('returns empty symbols when gate fires', async () => {
+      const result = await handleGetContextForTask(ctx, {
         task: 'xyznonexistent',
       })
       const data = JSON.parse(result.content[0].text)

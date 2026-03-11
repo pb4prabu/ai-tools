@@ -10,3 +10,7 @@ export { searchBM25, type BM25Result as BM25SearchResult } from './retrieval/bm2
 export { applyConfidenceGate } from './retrieval/confidence-gate.js'
 export { countTokens, estimateTokensFromBytes } from './token/counter.js'
 export { SavingsTracker } from './token/savings.js'
+// Vector search (opt-in)
+export { getEmbedder, prepareSymbolText, resetEmbedder, type Embedder } from './embeddings/local-embed.js'
+export { loadVec, insertVectors, clearVectors, vectorSearch, type VectorResult } from './retrieval/vector-search.js'
+export { rrfFusion, type FusedResult } from './retrieval/rrf-fusion.js'
