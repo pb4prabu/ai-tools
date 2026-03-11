@@ -1,0 +1,9 @@
+node_modules
+dist
+*.db
+*.db-shm
+*.db-wal
+.cortex/*.db
+savings.json
+.indexing.lock
+.DS_Store

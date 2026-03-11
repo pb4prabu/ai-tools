@@ -1,0 +1,12 @@
+// Public API — exported from @cortex-ai/core
+export * from './types/index.js'
+export { SafeFS } from './security/fs-guard.js'
+export { generateNamespace, getProjectRoot } from './namespace/namespace.js'
+export { createSchema, insertProject, insertSymbols, getSymbolById, getSymbolsByIds, getSymbolsByFile, getProjectOutline, clearProjectData } from './store/sqlite-store.js'
+export { loadProject } from './store/loader.js'
+export { readMeta, readCortexConfig, initCortexDir, writeSymbolFile, writeMeta, acquireIndexLock, releaseIndexLock, hashContent } from './store/fs-store.js'
+export { indexProject, type IndexResult, type ParseFileFn, type DetectArchFn } from './indexer/indexer.js'
+export { searchBM25, type BM25Result as BM25SearchResult } from './retrieval/bm25.js'
+export { applyConfidenceGate } from './retrieval/confidence-gate.js'
+export { countTokens, estimateTokensFromBytes } from './token/counter.js'
+export { SavingsTracker } from './token/savings.js'

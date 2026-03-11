@@ -1,0 +1,19 @@
+{
+  "name": "@cortex-ai/cli",
+  "version": "1.0.0",
+  "description": "CLI for Cortex — index, list, status, invalidate",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "cortex": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cortex-ai/core": "*",
+    "@cortex-ai/java": "*",
+    "better-sqlite3": "^11.7.0"
+  }
+}

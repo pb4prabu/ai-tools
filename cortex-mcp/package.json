@@ -1,0 +1,20 @@
+{
+  "name": "cortex",
+  "private": true,
+  "workspaces": [
+    "packages/cortex-core",
+    "packages/cortex-java",
+    "packages/cortex-cli"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "dev": "npm run dev --workspace=packages/cortex-core"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  }
+}
