@@ -8,8 +8,7 @@
     "condex": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
-    "test": "vitest run"
+    "build": "tsc"
   },
   "dependencies": {
     "@condex-ai/core": "*",
