@@ -1,0 +1,19 @@
+{
+  "name": "@condex-ai/cli",
+  "version": "1.0.0",
+  "description": "CLI for Condex — index, list, status, invalidate",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "condex": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@condex-ai/core": "*",
+    "@condex-ai/java": "*",
+    "better-sqlite3": "^11.7.0"
+  }
+}
