@@ -4,7 +4,7 @@ import { glob } from 'glob'
 import type Database from 'better-sqlite3'
 import type { SafeFS } from '../security/fs-guard.js'
 import type { Symbol } from '../types/symbol.js'
-import type { SchemaSymbol, ConfigSymbol } from '../types/schema.js'
+import type { SchemaSymbol, ConfigSymbol, SymbolRef } from '../types/schema.js'
 import type { CortexConfig, ProjectMeta } from '../types/config.js'
 import { DEFAULT_CONFIG } from '../types/config.js'
 import { generateNamespace } from '../namespace/namespace.js'
@@ -23,6 +23,7 @@ import {
 import {
   insertProject,
   insertSymbols,
+  insertRefs,
   clearProjectData,
 } from '../store/sqlite-store.js'
 import { loadProject } from '../store/loader.js'
@@ -46,6 +47,12 @@ export type ParseFileFn = (content: string, opts: {
   profile?: any
 }) => Symbol[]
 
+export type ParseFileWithRefsFn = (content: string, opts: {
+  projectId: string
+  filePath: string
+  profile?: any
+}) => { symbols: Symbol[]; refs: SymbolRef[] }
+
 export type DetectArchFn = (filePaths: string[]) => {
   architecture: string
   confidence: number
@@ -64,6 +71,7 @@ export async function indexProject(
   opts: {
     full?: boolean
     parseFile?: ParseFileFn
+    parseFileWithRefs?: ParseFileWithRefsFn
     detectArch?: DetectArchFn
     parseSql?: ParseSqlFn
     parseYaml?: ParseYamlFn
@@ -111,6 +119,7 @@ export async function indexProject(
 
     // Parse files
     const allSymbols: Symbol[] = []
+    const allRefs: SymbolRef[] = []
     const newHashes: Record<string, string> = {}
     let filesProcessed = 0
     let filesSkipped = 0
@@ -134,14 +143,25 @@ export async function indexProject(
         continue
       }
 
-      if (opts.parseFile) {
+      const parseOpts = {
+        projectId,
+        filePath: relPath,
+        profile: opts.detectArch ? opts.detectArch(sourceFiles) : undefined,
+      }
+
+      if (opts.parseFileWithRefs) {
         try {
-          const profile = opts.detectArch ? opts.detectArch(sourceFiles) : undefined
-          const symbols = opts.parseFile(content, {
-            projectId,
-            filePath: relPath,
-            profile,
-          })
+          const result = opts.parseFileWithRefs(content, parseOpts)
+          allSymbols.push(...result.symbols)
+          allRefs.push(...result.refs)
+          filesProcessed++
+        } catch (err: any) {
+          console.error(`[cortex] Error parsing ${relPath}: ${err.message}`)
+          filesSkipped++
+        }
+      } else if (opts.parseFile) {
+        try {
+          const symbols = opts.parseFile(content, parseOpts)
           allSymbols.push(...symbols)
           filesProcessed++
         } catch (err: any) {
@@ -216,9 +236,15 @@ export async function indexProject(
     }
     await writeMeta(safeFs, meta)
 
-    // Load into SQLite
+    // Load into SQLite (this clears existing data first)
     clearProjectData(db, projectId)
     const loadResult = await loadProject(db, safeFs)
+
+    // Insert refs AFTER loadProject (loadProject clears SQLite, so refs must come after)
+    if (allRefs.length > 0) {
+      insertRefs(db, allRefs)
+      console.error(`[cortex] Refs: ${allRefs.length} call-graph references extracted`)
+    }
 
     const loadTimeMs = Date.now() - startMs
     console.error(

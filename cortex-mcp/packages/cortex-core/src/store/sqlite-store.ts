@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import type { Symbol } from '../types/symbol.js'
-import type { SchemaSymbol, ConfigSymbol } from '../types/schema.js'
+import type { SchemaSymbol, ConfigSymbol, SymbolRef } from '../types/schema.js'
 import type { ProjectMeta } from '../types/config.js'
 
 /**
@@ -133,6 +133,20 @@ export function createSchema(db: Database.Database): void {
       INSERT INTO config_fts(config_fts, rowid, id, project_id, key_path, value, profile)
       VALUES ('delete', old.rowid, old.id, old.project_id, old.key_path, old.value, old.profile);
     END;
+
+    -- Symbol references (call graph)
+    CREATE TABLE IF NOT EXISTS symbol_refs (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_symbol_id      TEXT NOT NULL,
+      target_qualified_name TEXT NOT NULL,
+      ref_type              TEXT NOT NULL,
+      project_id            TEXT NOT NULL,
+      source_file           TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_refs_source  ON symbol_refs(source_symbol_id);
+    CREATE INDEX IF NOT EXISTS idx_refs_target  ON symbol_refs(target_qualified_name);
+    CREATE INDEX IF NOT EXISTS idx_refs_project ON symbol_refs(project_id);
   `)
 }
 
@@ -325,8 +339,81 @@ export function clearProjectData(db: Database.Database, projectId: string): void
     db.prepare('DELETE FROM symbols WHERE project_id = ?').run(projectId)
     db.prepare('DELETE FROM schema_symbols WHERE project_id = ?').run(projectId)
     db.prepare('DELETE FROM config_symbols WHERE project_id = ?').run(projectId)
+    db.prepare('DELETE FROM symbol_refs WHERE project_id = ?').run(projectId)
     db.prepare('DELETE FROM projects WHERE id = ?').run(projectId)
   })()
+}
+
+// ── Symbol Refs (Call Graph) ─────────────────────────────
+
+export function insertRefs(db: Database.Database, refs: SymbolRef[]): void {
+  if (refs.length === 0) return
+
+  const stmt = db.prepare(`
+    INSERT INTO symbol_refs (source_symbol_id, target_qualified_name, ref_type, project_id, source_file)
+    VALUES (?, ?, ?, ?, ?)
+  `)
+
+  const insertMany = db.transaction((items: SymbolRef[]) => {
+    for (const r of items) {
+      stmt.run(r.sourceSymbolId, r.targetQualifiedName, r.refType, r.projectId, r.sourceFile)
+    }
+  })
+
+  insertMany(refs)
+}
+
+/**
+ * Given a set of symbol IDs found by search, expand to include related symbols
+ * via the call graph (callers + callees, one hop).
+ * Returns de-duplicated set of all symbol IDs.
+ */
+export function getRelatedSymbolIds(
+  db: Database.Database,
+  symbolIds: string[],
+  projectId: string
+): string[] {
+  if (symbolIds.length === 0) return []
+
+  const idSet = new Set(symbolIds)
+
+  // Get qualified names for the input symbols
+  const placeholders = symbolIds.map(() => '?').join(',')
+  const inputSymbols = db.prepare(
+    `SELECT id, qualified_name FROM symbols WHERE id IN (${placeholders})`
+  ).all(...symbolIds) as { id: string; qualified_name: string }[]
+
+  const qualifiedNames = inputSymbols.map(s => s.qualified_name)
+
+  if (qualifiedNames.length > 0) {
+    // Forward: symbols that our results call/reference
+    const fwdPlaceholders = symbolIds.map(() => '?').join(',')
+    const forwardRefs = db.prepare(`
+      SELECT DISTINCT target_qualified_name FROM symbol_refs
+      WHERE source_symbol_id IN (${fwdPlaceholders}) AND project_id = ?
+    `).all(...symbolIds, projectId) as { target_qualified_name: string }[]
+
+    // Resolve target qualified names to symbol IDs
+    for (const ref of forwardRefs) {
+      const targets = db.prepare(
+        'SELECT id FROM symbols WHERE qualified_name = ? AND project_id = ?'
+      ).all(ref.target_qualified_name, projectId) as { id: string }[]
+      for (const t of targets) idSet.add(t.id)
+    }
+
+    // Reverse: symbols that call/reference our results
+    const qnPlaceholders = qualifiedNames.map(() => '?').join(',')
+    const reverseRefs = db.prepare(`
+      SELECT DISTINCT source_symbol_id FROM symbol_refs
+      WHERE target_qualified_name IN (${qnPlaceholders}) AND project_id = ?
+    `).all(...qualifiedNames, projectId) as { source_symbol_id: string }[]
+
+    for (const ref of reverseRefs) {
+      idSet.add(ref.source_symbol_id)
+    }
+  }
+
+  return [...idSet]
 }
 
 // ── Helpers ───────────────────────────────────────────────

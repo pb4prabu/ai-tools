@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import Parser from 'tree-sitter'
 // @ts-ignore — tree-sitter-java has no type declarations
 import Java from 'tree-sitter-java'
-import type { Symbol, SymbolKind } from '@cortex-ai/core'
+import type { Symbol, SymbolKind, SymbolRef, RefType } from '@cortex-ai/core'
 import { buildSymbolId } from '@cortex-ai/core'
 import { assignSpringRole } from './spring-tagger.js'
 import { assignHexRole } from './hex-role-tagger.js'
@@ -24,10 +24,23 @@ export interface ParseOptions {
   profile?: ProjectProfile
 }
 
+export interface ParseResult {
+  symbols: Symbol[]
+  refs: SymbolRef[]
+}
+
 /**
  * Parse a Java source file and extract symbols.
+ * Also returns symbols for backward-compat (refs ignored if not needed).
  */
 export function parseJavaFile(content: string, opts: ParseOptions): Symbol[] {
+  return parseJavaFileWithRefs(content, opts).symbols
+}
+
+/**
+ * Parse a Java source file and extract symbols + call graph references.
+ */
+export function parseJavaFileWithRefs(content: string, opts: ParseOptions): ParseResult {
   const p = getParser()
 
   let tree: Parser.Tree
@@ -35,7 +48,7 @@ export function parseJavaFile(content: string, opts: ParseOptions): Symbol[] {
     tree = p.parse(content)
   } catch {
     console.error(`[cortex-java] Failed to parse: ${opts.filePath}`)
-    return []
+    return { symbols: [], refs: [] }
   }
 
   const symbols: Symbol[] = []
@@ -50,7 +63,10 @@ export function parseJavaFile(content: string, opts: ParseOptions): Symbol[] {
     }
   }
 
-  return symbols
+  // Extract call graph references
+  const refs = extractFileRefs(tree.rootNode, packageName, opts)
+
+  return { symbols, refs }
 }
 
 function extractPackageName(root: Parser.SyntaxNode): string {
@@ -400,4 +416,197 @@ function extractInterfaces(node: Parser.SyntaxNode): string[] {
 function extractSuperclass(node: Parser.SyntaxNode): string | null {
   const superclass = node.childForFieldName('superclass')
   return superclass?.text ?? null
+}
+
+// ── Call Graph Extraction ─────────────────────────────────────
+
+/**
+ * Extract cross-symbol references from a Java file:
+ * - Field dependencies (injected types)
+ * - Method invocations (what each method calls)
+ * - Object creation (new Foo())
+ * - implements / extends relationships
+ */
+function extractFileRefs(
+  root: Parser.SyntaxNode,
+  packageName: string,
+  opts: ParseOptions
+): SymbolRef[] {
+  const refs: SymbolRef[] = []
+
+  // Build import map: SimpleName → qualified name
+  const importMap = buildImportMap(root)
+
+  // Build field type map: fieldName → TypeName
+  const fieldTypeMap = new Map<string, string>()
+
+  // Walk all class declarations
+  const classes = findAllNodes(root, [
+    'class_declaration', 'interface_declaration', 'enum_declaration',
+  ])
+
+  for (const classNode of classes) {
+    const classNameNode = classNode.childForFieldName('name')
+    if (!classNameNode) continue
+    const className = classNameNode.text
+    const classQualified = packageName ? `${packageName}.${className}` : className
+
+    // Extract field types for this class
+    const body = classNode.childForFieldName('body')
+    if (!body) continue
+
+    const localFieldTypeMap = new Map<string, string>()
+    for (const child of body.namedChildren) {
+      if (child.type === 'field_declaration') {
+        const typeNode = child.descendantsOfType('type_identifier')[0] ??
+                         child.descendantsOfType('generic_type')[0]
+        const declarators = child.descendantsOfType('variable_declarator')
+        if (typeNode) {
+          // Extract the base type name (strip generics)
+          const typeName = typeNode.type === 'generic_type'
+            ? (typeNode.descendantsOfType('type_identifier')[0]?.text ?? typeNode.text)
+            : typeNode.text
+          for (const decl of declarators) {
+            const nameNode = decl.childForFieldName('name')
+            if (nameNode) {
+              localFieldTypeMap.set(nameNode.text, typeName)
+              // Also add as field_dep ref
+              const resolvedType = importMap.get(typeName) ?? (packageName ? `${packageName}.${typeName}` : typeName)
+              refs.push({
+                sourceSymbolId: buildSymbolId(opts.projectId, opts.filePath, classQualified, 'class'),
+                targetQualifiedName: resolvedType,
+                refType: 'field_dep',
+                projectId: opts.projectId,
+                sourceFile: opts.filePath,
+              })
+            }
+          }
+        }
+      }
+    }
+
+    // Extract implements/extends
+    const interfaces = extractInterfaces(classNode)
+    for (const iface of interfaces) {
+      const resolved = importMap.get(iface) ?? (packageName ? `${packageName}.${iface}` : iface)
+      refs.push({
+        sourceSymbolId: buildSymbolId(opts.projectId, opts.filePath, classQualified, 'class'),
+        targetQualifiedName: resolved,
+        refType: 'implements',
+        projectId: opts.projectId,
+        sourceFile: opts.filePath,
+      })
+    }
+    const superclass = extractSuperclass(classNode)
+    if (superclass) {
+      const resolved = importMap.get(superclass) ?? (packageName ? `${packageName}.${superclass}` : superclass)
+      refs.push({
+        sourceSymbolId: buildSymbolId(opts.projectId, opts.filePath, classQualified, 'class'),
+        targetQualifiedName: resolved,
+        refType: 'extends',
+        projectId: opts.projectId,
+        sourceFile: opts.filePath,
+      })
+    }
+
+    // Walk methods for invocations
+    const methods = findAllNodes(body, ['method_declaration', 'constructor_declaration'])
+    for (const methodNode of methods) {
+      const isConstructor = methodNode.type === 'constructor_declaration'
+      const methodNameNode = methodNode.childForFieldName('name')
+      const methodSimpleName = isConstructor
+        ? className
+        : methodNameNode?.text
+      if (!methodSimpleName) continue
+
+      const params = extractParameterTypes(methodNode)
+      const methodQualified = packageName
+        ? `${packageName}.${className}.${methodSimpleName}(${params.join(',')})`
+        : `${className}.${methodSimpleName}(${params.join(',')})`
+      const methodKind: SymbolKind = isConstructor ? 'constructor' : 'method'
+      const sourceId = buildSymbolId(opts.projectId, opts.filePath, methodQualified, methodKind)
+
+      // Find method invocations
+      const invocations = findAllNodes(methodNode, ['method_invocation'])
+      for (const inv of invocations) {
+        const object = inv.childForFieldName('object')
+        const name = inv.childForFieldName('name')
+        if (!name) continue
+
+        // Resolve object to type
+        let targetType: string | undefined
+        if (object) {
+          const objText = object.text
+          // Check if it's a field reference: fieldName.method()
+          const fieldType = localFieldTypeMap.get(objText)
+          if (fieldType) {
+            targetType = importMap.get(fieldType) ?? (packageName ? `${packageName}.${fieldType}` : fieldType)
+          }
+          // Or a direct class reference: ClassName.method()
+          else if (objText[0] && objText[0] === objText[0].toUpperCase()) {
+            targetType = importMap.get(objText) ?? (packageName ? `${packageName}.${objText}` : objText)
+          }
+        }
+
+        if (targetType) {
+          refs.push({
+            sourceSymbolId: sourceId,
+            targetQualifiedName: `${targetType}.${name.text}`,
+            refType: 'calls',
+            projectId: opts.projectId,
+            sourceFile: opts.filePath,
+          })
+        }
+      }
+
+      // Find object creation expressions: new Foo()
+      const creations = findAllNodes(methodNode, ['object_creation_expression'])
+      for (const creation of creations) {
+        const typeNode = creation.descendantsOfType('type_identifier')[0]
+        if (typeNode) {
+          const resolved = importMap.get(typeNode.text) ?? (packageName ? `${packageName}.${typeNode.text}` : typeNode.text)
+          refs.push({
+            sourceSymbolId: sourceId,
+            targetQualifiedName: resolved,
+            refType: 'creates',
+            projectId: opts.projectId,
+            sourceFile: opts.filePath,
+          })
+        }
+      }
+    }
+  }
+
+  return refs
+}
+
+function buildImportMap(root: Parser.SyntaxNode): Map<string, string> {
+  const importMap = new Map<string, string>()
+  for (const child of root.namedChildren) {
+    if (child.type === 'import_declaration') {
+      const pathNode = child.namedChildren.find(
+        c => c.type === 'scoped_identifier' || c.type === 'identifier'
+      )
+      if (pathNode) {
+        const fullPath = pathNode.text
+        const simpleName = fullPath.split('.').pop()
+        if (simpleName) {
+          importMap.set(simpleName, fullPath)
+        }
+      }
+    }
+  }
+  return importMap
+}
+
+function findAllNodes(
+  node: Parser.SyntaxNode,
+  types: string[],
+  results: Parser.SyntaxNode[] = []
+): Parser.SyntaxNode[] {
+  if (types.includes(node.type)) results.push(node)
+  for (const child of node.namedChildren) {
+    findAllNodes(child, types, results)
+  }
+  return results
 }

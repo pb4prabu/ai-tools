@@ -1,4 +1,4 @@
-export { parseJavaFile, type ParseOptions } from './parser/java-parser.js'
+export { parseJavaFile, parseJavaFileWithRefs, type ParseOptions, type ParseResult } from './parser/java-parser.js'
 export { assignSpringRole } from './parser/spring-tagger.js'
 export { assignHexRole } from './parser/hex-role-tagger.js'
 export { detectArchitecture, type ProjectProfile, type ArchitectureType } from './parser/arch-detector.js'

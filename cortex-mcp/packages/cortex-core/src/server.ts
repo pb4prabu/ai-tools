@@ -23,7 +23,7 @@ import { SafeFS } from './security/fs-guard.js'
 import { generateNamespace } from './namespace/namespace.js'
 import { createSchema } from './store/sqlite-store.js'
 import { loadProject } from './store/loader.js'
-import { indexProject, type ParseFileFn, type DetectArchFn, type ParseSqlFn, type ParseYamlFn } from './indexer/indexer.js'
+import { indexProject, type ParseFileFn, type ParseFileWithRefsFn, type DetectArchFn, type ParseSqlFn, type ParseYamlFn } from './indexer/indexer.js'
 import { TOOL_DEFINITIONS } from './mcp/tools.js'
 import { dispatch } from './mcp/dispatcher.js'
 import { setSavingsTracker } from './mcp/meta.js'
@@ -36,17 +36,28 @@ const PROJECT_ROOT = path.resolve(process.cwd())
 const TOOL_VERSION = '1.0.0'
 const SEARCH_MODE = (process.env.CORTEX_SEARCH_MODE ?? 'bm25') as SearchMode
 
+// Configurable thresholds via env vars
+const BM25_MIN_SCORE = parseFloat(process.env.CORTEX_BM25_MIN_SCORE ?? '0.3')
+const VECTOR_MAX_DISTANCE = parseFloat(process.env.CORTEX_VECTOR_MAX_DISTANCE ?? '0.95')
+const SMART_BM25_MIN_SCORE = parseFloat(process.env.CORTEX_SMART_BM25_MIN_SCORE ?? '0.5')
+const SMART_VECTOR_MAX_DISTANCE = parseFloat(process.env.CORTEX_SMART_VECTOR_MAX_DISTANCE ?? '0.90')
+
 /**
  * Try to load the Java parser. Returns null if not installed.
  */
-function loadJavaParser(): { parseFile: ParseFileFn; detectArch: DetectArchFn; parseSql: ParseSqlFn; parseYaml: ParseYamlFn } | null {
+function loadJavaParser(): {
+  parseFile: ParseFileFn
+  parseFileWithRefs: ParseFileWithRefsFn
+  detectArch: DetectArchFn
+  parseSql: ParseSqlFn
+  parseYaml: ParseYamlFn
+} | null {
   try {
-    // Use createRequire anchored to THIS file's location so workspace
-    // packages resolve correctly regardless of process.cwd()
     const esmRequire = createRequire(import.meta.url)
     const javaPkg = esmRequire('@cortex-ai/java')
     return {
       parseFile: javaPkg.parseJavaFile as ParseFileFn,
+      parseFileWithRefs: javaPkg.parseJavaFileWithRefs as ParseFileWithRefsFn,
       detectArch: javaPkg.detectArchitecture as DetectArchFn,
       parseSql: javaPkg.parseSqlFile as ParseSqlFn,
       parseYaml: javaPkg.parseYamlFile as ParseYamlFn,
@@ -99,7 +110,7 @@ async function main() {
       console.error(`[cortex] No existing index. Running full index...`)
       const result = await indexProject(db, safeFs, {
         full: true,
-        parseFile: javaParsers.parseFile,
+        parseFileWithRefs: javaParsers.parseFileWithRefs,
         detectArch: javaParsers.detectArch,
         parseSql: javaParsers.parseSql,
         parseYaml: javaParsers.parseYaml,
@@ -163,6 +174,8 @@ async function main() {
   const savings = new SavingsTracker(safeFs)
   setSavingsTracker(savings)
 
+  console.error(`[cortex] Thresholds: bm25=${BM25_MIN_SCORE}, vector=${VECTOR_MAX_DISTANCE}, smart_bm25=${SMART_BM25_MIN_SCORE}, smart_vector=${SMART_VECTOR_MAX_DISTANCE}`)
+
   // Build handler context
   const ctx: HandlerContext = {
     db,
@@ -172,6 +185,12 @@ async function main() {
     architecture,
     searchMode: SEARCH_MODE,
     embedder,
+    thresholds: {
+      bm25MinScore: BM25_MIN_SCORE,
+      vectorMaxDistance: VECTOR_MAX_DISTANCE,
+      smartBm25MinScore: SMART_BM25_MIN_SCORE,
+      smartVectorMaxDistance: SMART_VECTOR_MAX_DISTANCE,
+    },
   }
 
   // Create MCP server
@@ -205,7 +224,7 @@ async function main() {
       const full = (args as any)?.full ?? false
       const result = await indexProject(db, safeFs, {
         full,
-        parseFile: javaParsers.parseFile,
+        parseFileWithRefs: javaParsers.parseFileWithRefs,
         detectArch: javaParsers.detectArch,
         parseSql: javaParsers.parseSql,
         parseYaml: javaParsers.parseYaml,

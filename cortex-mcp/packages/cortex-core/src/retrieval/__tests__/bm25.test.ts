@@ -106,7 +106,8 @@ describe('BM25 search', () => {
   })
 
   it('filters by kind', () => {
-    const results = searchBM25(db, 'order', 'test@abc', { kind: 'interface' })
+    // Use minScore=0 because single-word "order" has very low BM25 in a small corpus
+    const results = searchBM25(db, 'order', 'test@abc', { kind: 'interface' }, 0)
     expect(results.length).toBe(1)
     expect(results[0].symbolId).toBe('s2')
   })

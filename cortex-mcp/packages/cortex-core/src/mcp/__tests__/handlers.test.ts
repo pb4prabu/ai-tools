@@ -99,6 +99,12 @@ describe('MCP handlers', () => {
       architecture: 'hexagonal',
       searchMode: 'bm25',
       embedder: null,
+      thresholds: {
+        bm25MinScore: 0.3,
+        vectorMaxDistance: 0.95,
+        smartBm25MinScore: 0.5,
+        smartVectorMaxDistance: 0.90,
+      },
     }
   })
 
@@ -170,10 +176,11 @@ describe('MCP handlers', () => {
       expect(data[0].kind).toBe('interface')
     })
 
-    it('returns confidence gate message for no matches', async () => {
+    it('returns no results message for no matches', async () => {
       const result = await handleSearchSymbols(ctx, { query: 'xyznonexistent' })
       expect(result.content[0].text).toContain('No symbols found')
-      expect((result._meta as any).confidenceGateFired).toBe(true)
+      // With score-threshold approach, confidenceGateFired is false for BM25 mode
+      expect((result._meta as any).confidenceGateFired).toBe(false)
     })
 
     it('includes _meta with token savings', async () => {

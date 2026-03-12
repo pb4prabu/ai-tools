@@ -54,31 +54,29 @@ export function clearVectors(db: Database.Database, projectId: string): void {
 
 /**
  * Search for similar symbols using vector embeddings.
- * Over-fetches 3x and filters by project in application layer.
+ * Returns all results below maxDistance threshold (no count limit).
+ * Over-fetches from sqlite-vec and filters by project + distance in application layer.
  */
 export async function vectorSearch(
   db: Database.Database,
   queryText: string,
   projectId: string,
   embedder: Embedder,
-  topK: number = 20
+  maxDistance: number = 0.95
 ): Promise<VectorResult[]> {
   const queryVec = await embedder.embed(queryText)
   const queryBuf = Buffer.from(queryVec.buffer)
 
-  // Over-fetch 3x to account for filtering
-  const overFetch = topK * 3
-
+  // Fetch a large batch — sqlite-vec doesn't support WHERE on distance
   const rows = db.prepare(`
     SELECT symbol_id AS symbolId, distance
     FROM symbol_vectors
     WHERE embedding MATCH ?
     ORDER BY distance
-    LIMIT ?
-  `).all(queryBuf, overFetch) as VectorResult[]
+    LIMIT 500
+  `).all(queryBuf) as VectorResult[]
 
-  // Filter by project and take topK
+  // Filter by project and distance threshold
   return rows
-    .filter(r => r.symbolId.startsWith(`${projectId}::`))
-    .slice(0, topK)
+    .filter(r => r.symbolId.startsWith(`${projectId}::`) && r.distance <= maxDistance)
 }

@@ -41,13 +41,14 @@ function sanitizeQuery(query: string): string {
 
 /**
  * Build a BM25 search query against the FTS5 index.
+ * Returns all results above minScore (no count limit).
  */
 export function searchBM25(
   db: Database.Database,
   query: string,
   projectId: string,
   filters?: SearchFilters,
-  limit: number = 20
+  minScore: number = 0.3
 ): BM25Result[] {
   const sanitised = sanitizeQuery(query)
   if (!sanitised) return []
@@ -90,11 +91,12 @@ export function searchBM25(
     params.push(`%${filters.filePattern}%`)
   }
 
-  sql += ' ORDER BY bm25Score DESC LIMIT ?'
-  params.push(limit)
+  sql += ' ORDER BY bm25Score DESC LIMIT 500'
 
   try {
-    return db.prepare(sql).all(...params) as BM25Result[]
+    const results = db.prepare(sql).all(...params) as BM25Result[]
+    // Filter by score threshold — no count limit
+    return results.filter(r => r.bm25Score >= minScore)
   } catch {
     // FTS5 can throw on certain query patterns — return empty
     return []

@@ -12,11 +12,19 @@ import {
   getSymbolsByIds,
   getSymbolsByFile,
   getProjectOutline,
+  getRelatedSymbolIds,
   clearProjectData,
 } from '../store/sqlite-store.js'
 import { buildMeta, countTokens } from './meta.js'
 
 export type SearchMode = 'bm25' | 'vector' | 'hybrid' | 'smart'
+
+export interface SearchThresholds {
+  bm25MinScore: number
+  vectorMaxDistance: number
+  smartBm25MinScore: number
+  smartVectorMaxDistance: number
+}
 
 export interface HandlerContext {
   db: Database.Database
@@ -26,6 +34,7 @@ export interface HandlerContext {
   architecture: string | null
   searchMode: SearchMode
   embedder: Embedder | null
+  thresholds: SearchThresholds
 }
 
 type ToolResult = {
@@ -161,6 +170,75 @@ export function handleGetFileOutline(
 
 // ── search_symbols ────────────────────────────────────────
 
+interface SearchResult {
+  symbolId: string
+  qualifiedName: string
+  signature: string
+  kind: string
+  filePath: string
+  springRole?: string
+  hexRole?: string
+  score: number
+  searchMode: string
+  expanded?: boolean  // true if added via call-graph expansion
+}
+
+function bm25ResultToSearchResult(r: BM25Result, mode: string): SearchResult {
+  return {
+    symbolId: r.symbolId, qualifiedName: r.qualifiedName, signature: r.signature,
+    kind: r.kind, filePath: r.filePath, springRole: r.springRole ?? undefined,
+    hexRole: r.hexRole ?? undefined,
+    score: Math.round(r.bm25Score * 1000) / 1000, searchMode: mode,
+  }
+}
+
+function vectorResultToSearchResult(v: VectorResult, db: Database.Database, mode: string): SearchResult {
+  const sym = getSymbolById(db, v.symbolId)
+  return {
+    symbolId: v.symbolId,
+    qualifiedName: sym?.qualifiedName ?? v.symbolId,
+    signature: sym?.signature ?? '',
+    kind: sym?.kind ?? '',
+    filePath: sym?.filePath ?? '',
+    springRole: sym?.springRole ?? undefined,
+    hexRole: sym?.hexRole ?? undefined,
+    score: Math.round((1 - v.distance) * 1000) / 1000,
+    searchMode: mode,
+  }
+}
+
+/**
+ * Expand search results with call-graph related symbols.
+ * Adds callers/callees that weren't already in the result set.
+ */
+function expandWithCallGraph(
+  db: Database.Database,
+  results: SearchResult[],
+  projectId: string
+): SearchResult[] {
+  const existingIds = new Set(results.map(r => r.symbolId))
+  const allIds = getRelatedSymbolIds(db, [...existingIds], projectId)
+  const newIds = allIds.filter(id => !existingIds.has(id))
+
+  if (newIds.length === 0) return results
+
+  const newSymbols = getSymbolsByIds(db, newIds)
+  const expanded: SearchResult[] = newSymbols.map(s => ({
+    symbolId: s.id,
+    qualifiedName: s.qualifiedName,
+    signature: s.signature,
+    kind: s.kind,
+    filePath: s.filePath,
+    springRole: s.springRole ?? undefined,
+    hexRole: s.hexRole ?? undefined,
+    score: 0, // no search score — added via graph
+    searchMode: 'graph-expansion',
+    expanded: true,
+  }))
+
+  return [...results, ...expanded]
+}
+
 export async function handleSearchSymbols(
   ctx: HandlerContext,
   args: {
@@ -170,12 +248,11 @@ export async function handleSearchSymbols(
     springRole?: string
     hexRole?: string
     filePattern?: string
-    limit?: number
   }
 ): Promise<ToolResult> {
   const startMs = Date.now()
   const pid = args.projectId ?? ctx.projectId
-  const limit = args.limit ?? 20
+  const { thresholds } = ctx
 
   const filters = {
     kind: args.kind as any,
@@ -184,112 +261,77 @@ export async function handleSearchSymbols(
     filePattern: args.filePattern,
   }
 
-  let results: { symbolId: string; qualifiedName: string; signature: string; kind: string; filePath: string; springRole?: string; hexRole?: string; score: number; searchMode: string }[]
+  let results: SearchResult[]
   let gateFired = false
   let topScore = 0
 
   if (ctx.searchMode === 'bm25') {
-    // ── BM25 only ──
-    const rawResults = searchBM25(ctx.db, args.query, pid, filters, limit)
-    const gate = applyConfidenceGate(rawResults)
-    gateFired = !gate.passed
-    topScore = gate.topScore
+    // ── BM25 only — score threshold, no count limit ──
+    const rawResults = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
+    topScore = rawResults[0]?.bm25Score ?? 0
 
-    if (!gate.passed) {
-      const reason = gate.reason === 'NO_RESULTS'
-        ? `No symbols found matching "${args.query}"`
-        : `Results below confidence threshold for "${args.query}". Try a more specific query.`
-      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: gate.topScore })
+    if (rawResults.length === 0) {
+      const reason = `No symbols found matching "${args.query}"`
+      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: false, topScore: 0 })
       return textResult(reason, meta as unknown as Record<string, unknown>)
     }
 
-    results = gate.results.map((r: BM25Result) => ({
-      symbolId: r.symbolId, qualifiedName: r.qualifiedName, signature: r.signature,
-      kind: r.kind, filePath: r.filePath, springRole: r.springRole ?? undefined, hexRole: r.hexRole ?? undefined,
-      score: Math.round(r.bm25Score * 1000) / 1000, searchMode: 'bm25',
-    }))
+    results = rawResults.map(r => bm25ResultToSearchResult(r, 'bm25'))
+    // Expand with call graph
+    results = expandWithCallGraph(ctx.db, results, pid)
 
   } else if (ctx.searchMode === 'vector') {
-    // ── Vector only ──
+    // ── Vector only — distance threshold, no count limit ──
     if (!ctx.embedder) {
-      return textResult('Vector search unavailable: embedder not loaded. Server needs CORTEX_SEARCH_MODE=vector and @huggingface/transformers installed.')
+      return textResult('Vector search unavailable: embedder not loaded.')
     }
-    const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, limit)
+    const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
+    topScore = vecResults.length > 0 ? (1 - vecResults[0].distance) : 0
+
     if (vecResults.length === 0) {
       const reason = `No symbols found matching "${args.query}" via vector search`
       const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: false, topScore: 0 })
       return textResult(reason, meta as unknown as Record<string, unknown>)
     }
 
-    results = vecResults.map(v => {
-      const sym = getSymbolById(ctx.db, v.symbolId)
-      return {
-        symbolId: v.symbolId,
-        qualifiedName: sym?.qualifiedName ?? v.symbolId,
-        signature: sym?.signature ?? '',
-        kind: sym?.kind ?? '',
-        filePath: sym?.filePath ?? '',
-        springRole: sym?.springRole ?? undefined,
-        hexRole: sym?.hexRole ?? undefined,
-        score: Math.round((1 - v.distance) * 1000) / 1000,
-        searchMode: 'vector',
-      }
-    })
+    results = vecResults.map(v => vectorResultToSearchResult(v, ctx.db, 'vector'))
 
   } else if (ctx.searchMode === 'smart') {
-    // ── Smart: BM25 first, vector fallback when gate fires ──
-    const rawResults = searchBM25(ctx.db, args.query, pid, filters, limit)
-    const gate = applyConfidenceGate(rawResults)
-    topScore = gate.topScore
+    // ── Smart: BM25 first (conservative), vector fallback ──
+    const rawResults = searchBM25(ctx.db, args.query, pid, filters, thresholds.smartBm25MinScore)
+    topScore = rawResults[0]?.bm25Score ?? 0
 
-    if (gate.passed) {
-      // BM25 confident — use it (cheapest path)
+    if (rawResults.length > 0) {
+      // BM25 found results above conservative threshold — use them
       gateFired = false
-      results = gate.results.map((r: BM25Result) => ({
-        symbolId: r.symbolId, qualifiedName: r.qualifiedName, signature: r.signature,
-        kind: r.kind, filePath: r.filePath, springRole: r.springRole ?? undefined, hexRole: r.hexRole ?? undefined,
-        score: Math.round(r.bm25Score * 1000) / 1000, searchMode: 'bm25',
-      }))
+      results = rawResults.map(r => bm25ResultToSearchResult(r, 'bm25'))
+      // Expand with call graph
+      results = expandWithCallGraph(ctx.db, results, pid)
     } else if (ctx.embedder) {
-      // BM25 gate fired — fall back to vector search
+      // BM25 didn't find confident results — fall back to vector
       gateFired = true
-      const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, limit)
+      const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.smartVectorMaxDistance)
       if (vecResults.length === 0) {
-        const reason = `No symbols found matching "${args.query}" (BM25 gate fired, vector also empty)`
-        const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: gate.topScore })
+        const reason = `No symbols found matching "${args.query}" (BM25 and vector both empty)`
+        const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore })
         return textResult(reason, meta as unknown as Record<string, unknown>)
       }
-      results = vecResults.map(v => {
-        const sym = getSymbolById(ctx.db, v.symbolId)
-        return {
-          symbolId: v.symbolId,
-          qualifiedName: sym?.qualifiedName ?? v.symbolId,
-          signature: sym?.signature ?? '',
-          kind: sym?.kind ?? '',
-          filePath: sym?.filePath ?? '',
-          springRole: sym?.springRole ?? undefined,
-          hexRole: sym?.hexRole ?? undefined,
-          score: Math.round((1 - v.distance) * 1000) / 1000,
-          searchMode: 'vector-fallback',
-        }
-      })
+      results = vecResults.map(v => vectorResultToSearchResult(v, ctx.db, 'vector-fallback'))
     } else {
-      // No embedder available — same as pure BM25 gate fire
+      // No embedder — return empty
       gateFired = true
-      const reason = gate.reason === 'NO_RESULTS'
-        ? `No symbols found matching "${args.query}"`
-        : `Results below confidence threshold for "${args.query}". Try a more specific query.`
-      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: gate.topScore })
+      const reason = `No symbols found matching "${args.query}"`
+      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore })
       return textResult(reason, meta as unknown as Record<string, unknown>)
     }
 
   } else {
     // ── Hybrid: BM25 + Vector with RRF fusion ──
-    const bm25Results = searchBM25(ctx.db, args.query, pid, filters, limit * 2)
+    const bm25Results = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
 
     let vecResults: VectorResult[] = []
     if (ctx.embedder) {
-      vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, limit * 2)
+      vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
     }
 
     if (bm25Results.length === 0 && vecResults.length === 0) {
@@ -298,7 +340,7 @@ export async function handleSearchSymbols(
       return textResult(reason, meta as unknown as Record<string, unknown>)
     }
 
-    const fused = rrfFusion(bm25Results, vecResults, limit)
+    const fused = rrfFusion(bm25Results, vecResults, 200) // no artificial limit
     topScore = fused[0]?.rrfScore ?? 0
 
     results = fused.map(f => {
@@ -315,6 +357,8 @@ export async function handleSearchSymbols(
         searchMode: 'hybrid',
       }
     })
+    // Expand with call graph
+    results = expandWithCallGraph(ctx.db, results, pid)
   }
 
   const text = JSON.stringify(results, null, 2)
@@ -571,7 +615,6 @@ export async function handleGetContextForTask(
   const searchResult = await handleSearchSymbols(ctx, {
     query: args.task,
     projectId: pid,
-    limit: 30,
   })
 
   // Parse the search results
