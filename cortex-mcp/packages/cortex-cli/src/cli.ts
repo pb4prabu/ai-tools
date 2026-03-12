@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
 import {
   SafeFS,
@@ -35,8 +36,9 @@ async function main() {
 }
 
 async function handleIndex() {
-  const targetPath = args[1] ? path.resolve(args[1]) : process.cwd()
   const full = args.includes('--full')
+  const positional = args.slice(1).find(a => !a.startsWith('--'))
+  const targetPath = positional ? path.resolve(positional) : process.cwd()
 
   console.log(`Indexing: ${targetPath}${full ? ' (full)' : ''}`)
 
@@ -48,10 +50,15 @@ async function handleIndex() {
   // Try to load Java parser
   let parseFile: any
   let detectArch: any
+  let parseSql: any
+  let parseYaml: any
   try {
-    const javaPkg = require('@cortex-ai/java')
+    const esmRequire = createRequire(import.meta.url)
+    const javaPkg = esmRequire('@cortex-ai/java')
     parseFile = javaPkg.parseJavaFile
     detectArch = javaPkg.detectArchitecture
+    parseSql = javaPkg.parseSqlFile
+    parseYaml = javaPkg.parseYamlFile
   } catch {
     console.log('Note: @cortex-ai/java not found. Install it for Java parsing.')
   }
@@ -60,6 +67,8 @@ async function handleIndex() {
     full,
     parseFile,
     detectArch,
+    parseSql,
+    parseYaml,
   })
 
   console.log(`Done!`)

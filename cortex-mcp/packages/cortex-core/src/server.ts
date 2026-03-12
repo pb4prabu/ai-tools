@@ -8,6 +8,7 @@ if (searchMode === 'bm25') {
 } else {
   console.error(`[cortex] Network guard DISABLED for ${searchMode} mode (model download may be needed)`)
 }
+// smart mode also needs embedder for vector fallback
 
 import path from 'node:path'
 import { createRequire } from 'node:module'
@@ -22,7 +23,7 @@ import { SafeFS } from './security/fs-guard.js'
 import { generateNamespace } from './namespace/namespace.js'
 import { createSchema } from './store/sqlite-store.js'
 import { loadProject } from './store/loader.js'
-import { indexProject, type ParseFileFn, type DetectArchFn } from './indexer/indexer.js'
+import { indexProject, type ParseFileFn, type DetectArchFn, type ParseSqlFn, type ParseYamlFn } from './indexer/indexer.js'
 import { TOOL_DEFINITIONS } from './mcp/tools.js'
 import { dispatch } from './mcp/dispatcher.js'
 import { setSavingsTracker } from './mcp/meta.js'
@@ -38,7 +39,7 @@ const SEARCH_MODE = (process.env.CORTEX_SEARCH_MODE ?? 'bm25') as SearchMode
 /**
  * Try to load the Java parser. Returns null if not installed.
  */
-function loadJavaParser(): { parseFile: ParseFileFn; detectArch: DetectArchFn } | null {
+function loadJavaParser(): { parseFile: ParseFileFn; detectArch: DetectArchFn; parseSql: ParseSqlFn; parseYaml: ParseYamlFn } | null {
   try {
     // Use createRequire anchored to THIS file's location so workspace
     // packages resolve correctly regardless of process.cwd()
@@ -47,6 +48,8 @@ function loadJavaParser(): { parseFile: ParseFileFn; detectArch: DetectArchFn } 
     return {
       parseFile: javaPkg.parseJavaFile as ParseFileFn,
       detectArch: javaPkg.detectArchitecture as DetectArchFn,
+      parseSql: javaPkg.parseSqlFile as ParseSqlFn,
+      parseYaml: javaPkg.parseYamlFile as ParseYamlFn,
     }
   } catch {
     return null
@@ -98,6 +101,8 @@ async function main() {
         full: true,
         parseFile: javaParsers.parseFile,
         detectArch: javaParsers.detectArch,
+        parseSql: javaParsers.parseSql,
+        parseYaml: javaParsers.parseYaml,
       })
       architecture = result.architecture
       console.error(
@@ -115,7 +120,7 @@ async function main() {
   console.error(`[cortex] Search mode: ${SEARCH_MODE}`)
   let embedder: Embedder | null = null
 
-  if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid') {
+  if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid' || SEARCH_MODE === 'smart') {
     try {
       const { getEmbedder, prepareSymbolText } = await import('./embeddings/local-embed.js')
       console.error(`[cortex] Loading embedding model (first run downloads ~100MB)...`)
@@ -202,6 +207,8 @@ async function main() {
         full,
         parseFile: javaParsers.parseFile,
         detectArch: javaParsers.detectArch,
+        parseSql: javaParsers.parseSql,
+        parseYaml: javaParsers.parseYaml,
       })
       ctx.architecture = result.architecture
       return {

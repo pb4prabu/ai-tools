@@ -16,7 +16,7 @@ import {
 } from '../store/sqlite-store.js'
 import { buildMeta, countTokens } from './meta.js'
 
-export type SearchMode = 'bm25' | 'vector' | 'hybrid'
+export type SearchMode = 'bm25' | 'vector' | 'hybrid' | 'smart'
 
 export interface HandlerContext {
   db: Database.Database
@@ -235,6 +235,53 @@ export async function handleSearchSymbols(
         searchMode: 'vector',
       }
     })
+
+  } else if (ctx.searchMode === 'smart') {
+    // ── Smart: BM25 first, vector fallback when gate fires ──
+    const rawResults = searchBM25(ctx.db, args.query, pid, filters, limit)
+    const gate = applyConfidenceGate(rawResults)
+    topScore = gate.topScore
+
+    if (gate.passed) {
+      // BM25 confident — use it (cheapest path)
+      gateFired = false
+      results = gate.results.map((r: BM25Result) => ({
+        symbolId: r.symbolId, qualifiedName: r.qualifiedName, signature: r.signature,
+        kind: r.kind, filePath: r.filePath, springRole: r.springRole ?? undefined, hexRole: r.hexRole ?? undefined,
+        score: Math.round(r.bm25Score * 1000) / 1000, searchMode: 'bm25',
+      }))
+    } else if (ctx.embedder) {
+      // BM25 gate fired — fall back to vector search
+      gateFired = true
+      const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, limit)
+      if (vecResults.length === 0) {
+        const reason = `No symbols found matching "${args.query}" (BM25 gate fired, vector also empty)`
+        const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: gate.topScore })
+        return textResult(reason, meta as unknown as Record<string, unknown>)
+      }
+      results = vecResults.map(v => {
+        const sym = getSymbolById(ctx.db, v.symbolId)
+        return {
+          symbolId: v.symbolId,
+          qualifiedName: sym?.qualifiedName ?? v.symbolId,
+          signature: sym?.signature ?? '',
+          kind: sym?.kind ?? '',
+          filePath: sym?.filePath ?? '',
+          springRole: sym?.springRole ?? undefined,
+          hexRole: sym?.hexRole ?? undefined,
+          score: Math.round((1 - v.distance) * 1000) / 1000,
+          searchMode: 'vector-fallback',
+        }
+      })
+    } else {
+      // No embedder available — same as pure BM25 gate fire
+      gateFired = true
+      const reason = gate.reason === 'NO_RESULTS'
+        ? `No symbols found matching "${args.query}"`
+        : `Results below confidence threshold for "${args.query}". Try a more specific query.`
+      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: gate.topScore })
+      return textResult(reason, meta as unknown as Record<string, unknown>)
+    }
 
   } else {
     // ── Hybrid: BM25 + Vector with RRF fusion ──

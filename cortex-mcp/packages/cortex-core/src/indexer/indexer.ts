@@ -4,12 +4,15 @@ import { glob } from 'glob'
 import type Database from 'better-sqlite3'
 import type { SafeFS } from '../security/fs-guard.js'
 import type { Symbol } from '../types/symbol.js'
+import type { SchemaSymbol, ConfigSymbol } from '../types/schema.js'
 import type { CortexConfig, ProjectMeta } from '../types/config.js'
 import { DEFAULT_CONFIG } from '../types/config.js'
 import { generateNamespace } from '../namespace/namespace.js'
 import {
   initCortexDir,
   writeSymbolFile,
+  writeSchemaSymbols,
+  writeConfigSymbols,
   writeMeta,
   readMeta,
   readCortexConfig,
@@ -49,6 +52,9 @@ export type DetectArchFn = (filePaths: string[]) => {
   signals: string[]
 }
 
+export type ParseSqlFn = (content: string, projectId: string, sourceFile: string) => SchemaSymbol[]
+export type ParseYamlFn = (content: string, projectId: string, sourceFile: string) => ConfigSymbol[]
+
 /**
  * Full index of a project folder.
  */
@@ -59,6 +65,8 @@ export async function indexProject(
     full?: boolean
     parseFile?: ParseFileFn
     detectArch?: DetectArchFn
+    parseSql?: ParseSqlFn
+    parseYaml?: ParseYamlFn
   } = {}
 ): Promise<IndexResult> {
   const startMs = Date.now()
@@ -150,6 +158,46 @@ export async function indexProject(
       await writeSymbolFile(safeFs, sym)
     }
 
+    // ── Parse SQL migrations ──
+    const allSchemas: SchemaSymbol[] = []
+    if (opts.parseSql) {
+      const sqlPattern = config.sources?.sql || '**/*.sql'
+      const sqlFiles = await findFiles(projectRoot, sqlPattern, config)
+      for (const relPath of sqlFiles) {
+        try {
+          const content = fs.readFileSync(path.join(projectRoot, relPath), 'utf-8')
+          const schemas = opts.parseSql(content, projectId, relPath)
+          allSchemas.push(...schemas)
+        } catch (err: any) {
+          console.error(`[cortex] Error parsing SQL ${relPath}: ${err.message}`)
+        }
+      }
+      if (allSchemas.length > 0) {
+        await writeSchemaSymbols(safeFs, allSchemas)
+        console.error(`[cortex] Schema: ${allSchemas.length} symbols from ${sqlFiles.length} SQL files`)
+      }
+    }
+
+    // ── Parse YAML config ──
+    const allConfigs: ConfigSymbol[] = []
+    if (opts.parseYaml) {
+      const yamlPattern = config.sources?.yaml || '**/*.{yml,yaml}'
+      const yamlFiles = await findFiles(projectRoot, yamlPattern, config)
+      for (const relPath of yamlFiles) {
+        try {
+          const content = fs.readFileSync(path.join(projectRoot, relPath), 'utf-8')
+          const configs = opts.parseYaml(content, projectId, relPath)
+          allConfigs.push(...configs)
+        } catch (err: any) {
+          console.error(`[cortex] Error parsing YAML ${relPath}: ${err.message}`)
+        }
+      }
+      if (allConfigs.length > 0) {
+        await writeConfigSymbols(safeFs, allConfigs)
+        console.error(`[cortex] Config: ${allConfigs.length} properties from ${yamlFiles.length} YAML files`)
+      }
+    }
+
     // Write meta
     const meta: ProjectMeta = {
       projectId,
@@ -162,8 +210,8 @@ export async function indexProject(
       lastIncrementalIndex: new Date().toISOString(),
       toolVersion: TOOL_VERSION,
       symbolCount: allSymbols.length,
-      schemaCount: 0,
-      configCount: 0,
+      schemaCount: allSchemas.length,
+      configCount: allConfigs.length,
       fileHashes: newHashes,
     }
     await writeMeta(safeFs, meta)
@@ -212,6 +260,22 @@ function detectLanguage(projectRoot: string): string {
   }
 
   return 'java' // default
+}
+
+async function findFiles(
+  projectRoot: string,
+  pattern: string,
+  config: Partial<CortexConfig>
+): Promise<string[]> {
+  const exclude = config.exclude ?? DEFAULT_CONFIG.exclude
+  const allExclude = [...new Set([...exclude, '**/.cortex/**'])]
+
+  const files = await glob(pattern, {
+    cwd: projectRoot,
+    ignore: allExclude,
+    nodir: true,
+  })
+  return [...new Set(files)].sort()
 }
 
 async function findSourceFiles(
