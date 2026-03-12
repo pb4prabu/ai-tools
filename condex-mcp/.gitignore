@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.condex/*.db
+.condex/savings.json
+.condex/.indexing.lock
+*.tsbuildinfo
+.DS_Store
