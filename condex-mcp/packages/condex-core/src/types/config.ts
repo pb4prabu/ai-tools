@@ -12,7 +12,7 @@ export interface CondexConfig {
   retrieval?: {
     confidenceThreshold?: number // default: 0.12
     maxResultsPerSearch?: number // default: 20
-    defaultTokenBudget?: number // default: 2000
+    defaultTokenBudget?: number // default: 50000
   }
 }
 
@@ -39,7 +39,7 @@ export const DEFAULT_CONFIG: Required<CondexConfig> = {
   retrieval: {
     confidenceThreshold: 0.12,
     maxResultsPerSearch: 20,
-    defaultTokenBudget: 2000,
+    defaultTokenBudget: 50000,
   },
 }
 

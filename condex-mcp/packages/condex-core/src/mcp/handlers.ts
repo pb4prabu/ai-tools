@@ -640,7 +640,7 @@ export async function handleGetContextForTask(
 ): Promise<ToolResult> {
   const startMs = Date.now()
   const pid = args.projectId ?? ctx.projectId
-  const budget = args.tokenBudget ?? 2000
+  const budget = args.tokenBudget ?? 50000
 
   // Use search_symbols logic to get ranked results
   const searchResult = await handleSearchSymbols(ctx, {
