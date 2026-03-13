@@ -76,7 +76,7 @@ export async function getEmbedder(): Promise<Embedder> {
   return embedderInstance
 }
 
-function getCacheDir(): string {
+export function getCacheDir(): string {
   // Allow explicit override via env var
   if (process.env.CONDEX_MODEL_CACHE_DIR) {
     return process.env.CONDEX_MODEL_CACHE_DIR

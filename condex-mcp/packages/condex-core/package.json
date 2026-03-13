@@ -13,6 +13,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "tsx src/scripts/download-model.ts",
+    "download-model": "tsx src/scripts/download-model.ts",
     "dev": "tsx src/server.ts",
     "test": "vitest run"
   },

@@ -431,7 +431,12 @@ Cumulative savings persisted in `.condex/savings.json`.
 
 | Variable | Values | Default | Purpose |
 |----------|--------|---------|---------|
-| `CONDEX_SEARCH_MODE` | `bm25` / `vector` / `hybrid` | `bm25` | Search algorithm |
+| `CONDEX_SEARCH_MODE` | `bm25` / `vector` / `hybrid` / `smart` | `bm25` | Search algorithm |
+| `CONDEX_MODEL_CACHE_DIR` | Absolute path | `~/.cache/condex/models` (Linux) / `~/Library/Caches/condex/models` (macOS) | Override embedding model cache location |
+| `CONDEX_BM25_MIN_SCORE` | Float | `0.3` | Minimum BM25 score threshold |
+| `CONDEX_VECTOR_MAX_DISTANCE` | Float | `0.95` | Maximum vector distance threshold |
+| `CONDEX_SMART_BM25_MIN_SCORE` | Float | `0.5` | Stricter BM25 threshold for smart mode |
+| `CONDEX_SMART_VECTOR_MAX_DISTANCE` | Float | `0.90` | Vector distance threshold for smart fallback |
 
 ### Project Config (optional)
 
@@ -467,13 +472,19 @@ Cumulative savings persisted in `.condex/savings.json`.
     "condex-vector": {
       "type": "local",
       "command": ["node", "/path/to/condex-mcp/packages/condex-core/dist/server.js"],
-      "environment": { "CONDEX_SEARCH_MODE": "vector" },
+      "environment": {
+        "CONDEX_SEARCH_MODE": "vector",
+        "CONDEX_MODEL_CACHE_DIR": "/path/to/models"
+      },
       "enabled": false
     },
-    "condex-hybrid": {
+    "condex-smart": {
       "type": "local",
       "command": ["node", "/path/to/condex-mcp/packages/condex-core/dist/server.js"],
-      "environment": { "CONDEX_SEARCH_MODE": "hybrid" },
+      "environment": {
+        "CONDEX_SEARCH_MODE": "smart",
+        "CONDEX_MODEL_CACHE_DIR": "/path/to/models"
+      },
       "enabled": false
     }
   }
@@ -489,7 +500,26 @@ In `~/.claude.json` under `projects.<path>.mcpServers`:
   "condex-mcp": {
     "type": "stdio",
     "command": "node",
-    "args": ["/path/to/condex-mcp/packages/condex-core/dist/server.js"]
+    "args": ["/path/to/condex-mcp/packages/condex-core/dist/server.js"],
+    "env": {
+      "CONDEX_SEARCH_MODE": "bm25"
+    }
+  }
+}
+```
+
+For vector/smart modes with a custom model path:
+
+```json
+{
+  "condex-mcp": {
+    "type": "stdio",
+    "command": "node",
+    "args": ["/path/to/condex-mcp/packages/condex-core/dist/server.js"],
+    "env": {
+      "CONDEX_SEARCH_MODE": "smart",
+      "CONDEX_MODEL_CACHE_DIR": "/path/to/models"
+    }
   }
 }
 ```
@@ -524,10 +554,34 @@ npm install
 npm run build
 ```
 
+The build step automatically downloads the embedding model (~100MB, `nomic-ai/nomic-embed-text-v1.5`) to the default cache directory. This ensures the model is ready before the MCP server starts.
+
+**Default model cache locations:**
+- **Linux**: `$XDG_CACHE_HOME/condex/models` (or `~/.cache/condex/models`)
+- **macOS**: `~/Library/Caches/condex/models`
+
+To use a custom model cache directory:
+
+```bash
+CONDEX_MODEL_CACHE_DIR=/path/to/models npm run build
+```
+
+To download the model separately (without a full build):
+
+```bash
+# Default location
+npm run download-model --workspace=packages/condex-core
+
+# Custom location
+CONDEX_MODEL_CACHE_DIR=/path/to/models npm run download-model --workspace=packages/condex-core
+```
+
+> **Note**: If the model is not pre-downloaded, the MCP server will download it on first startup when using vector/hybrid/smart modes. This fallback download adds ~30-60s to the first startup since the model is ~100MB.
+
 ### Run Tests
 
 ```bash
-npm test                    # All 108 tests
+npm test                    # All tests
 npx vitest run --reporter=verbose  # Verbose output
 ```
 

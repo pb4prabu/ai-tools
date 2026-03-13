@@ -13,37 +13,41 @@
   },
 
   "condex-vector": {
-    "_description": "Vector mode — semantic/natural-language search, downloads ~100MB embedding model on first run, ~47.3% token savings",
+    "_description": "Vector mode — semantic/natural-language search, ~47.3% token savings. Pre-download model with 'npm run download-model' to avoid ~100MB download on first startup.",
     "type": "stdio",
     "command": "node",
     "args": ["./condex-mcp/packages/condex-core/dist/server.js"],
     "env": {
       "CONDEX_SEARCH_MODE": "vector",
-      "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
-    }
+      "CONDEX_VECTOR_MAX_DISTANCE": "0.95",
+      "CONDEX_MODEL_CACHE_DIR": ""
+    },
+    "_note_CONDEX_MODEL_CACHE_DIR": "Optional. Leave empty for default (~/.cache/condex/models on Linux, ~/Library/Caches/condex/models on macOS). Set to override model cache location."
   },
 
   "condex-hybrid": {
-    "_description": "Hybrid mode — BM25 + Vector with RRF fusion, best recall, ~47.3% token savings, requires model download",
+    "_description": "Hybrid mode — BM25 + Vector with RRF fusion, best recall, ~47.3% token savings. Pre-download model with 'npm run download-model' to avoid ~100MB download on first startup.",
     "type": "stdio",
     "command": "node",
     "args": ["./condex-mcp/packages/condex-core/dist/server.js"],
     "env": {
       "CONDEX_SEARCH_MODE": "hybrid",
       "CONDEX_BM25_MIN_SCORE": "0.3",
-      "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
+      "CONDEX_VECTOR_MAX_DISTANCE": "0.95",
+      "CONDEX_MODEL_CACHE_DIR": ""
     }
   },
 
   "condex-smart": {
-    "_description": "Smart mode — BM25 first with stricter threshold, falls back to vector when confidence is low, ~82.1% token savings, best balance",
+    "_description": "Smart mode — BM25 first with stricter threshold, falls back to vector when confidence is low, ~82.1% token savings, best balance. Pre-download model with 'npm run download-model' to avoid ~100MB download on first startup.",
     "type": "stdio",
     "command": "node",
     "args": ["./condex-mcp/packages/condex-core/dist/server.js"],
     "env": {
       "CONDEX_SEARCH_MODE": "smart",
       "CONDEX_SMART_BM25_MIN_SCORE": "0.5",
-      "CONDEX_SMART_VECTOR_MAX_DISTANCE": "0.90"
+      "CONDEX_SMART_VECTOR_MAX_DISTANCE": "0.90",
+      "CONDEX_MODEL_CACHE_DIR": ""
     }
   },
 
@@ -87,6 +91,7 @@
   "_all_env_vars": {
     "_description": "Complete list of environment variables with defaults",
     "CONDEX_SEARCH_MODE": "bm25 | vector | hybrid | smart (default: bm25)",
+    "CONDEX_MODEL_CACHE_DIR": "Override embedding model cache directory (default: ~/.cache/condex/models on Linux, ~/Library/Caches/condex/models on macOS)",
     "CONDEX_BM25_MIN_SCORE": "Minimum BM25 score threshold (default: 0.3)",
     "CONDEX_VECTOR_MAX_DISTANCE": "Maximum vector distance threshold (default: 0.95)",
     "CONDEX_SMART_BM25_MIN_SCORE": "Stricter BM25 threshold for smart mode (default: 0.5)",

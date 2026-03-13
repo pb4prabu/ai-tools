@@ -134,10 +134,12 @@ async function main() {
 
   if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid' || SEARCH_MODE === 'smart') {
     try {
-      const { getEmbedder, prepareSymbolText, ensureModelDownloaded } = await import('./embeddings/local-embed.js')
-      console.error(`[condex] Loading embedding model (first run downloads ~100MB)...`)
-      const modelCacheDir = await ensureModelDownloaded()
+      const { getEmbedder, prepareSymbolText, ensureModelDownloaded, getCacheDir } = await import('./embeddings/local-embed.js')
+      const modelCacheDir = getCacheDir()
       console.error(`[condex] Model cache directory: ${modelCacheDir}`)
+      console.error(`[condex] Loading embedding model (fallback download ~100MB if not pre-cached)...`)
+      console.error(`[condex] Tip: Run 'npm run download-model' to pre-download the model and avoid startup delay.`)
+      await ensureModelDownloaded()
       embedder = await getEmbedder()
       console.error(`[condex] Embedder ready (${embedder.dimensions} dimensions)`)
 

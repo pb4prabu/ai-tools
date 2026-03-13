@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { createSchema, insertProject, insertSymbols } from '../../store/sqlite-store.js'
 import { SafeFS } from '../../security/fs-guard.js'
@@ -8,6 +8,8 @@ import {
   handleGetProjectOutline,
   handleGetFileOutline,
   handleSearchSymbols,
+  handleGetSymbol,
+  handleGetSymbols,
   handleSearchSchema,
   handleGetContextForTask,
 } from '../handlers.js'
@@ -217,6 +219,68 @@ describe('MCP handlers', () => {
     it('returns empty for no schema data', async () => {
       const result = await handleSearchSchema(ctx, { query: 'orders' })
       expect(result.content[0].text).toContain('No schema matches')
+    })
+  })
+
+  describe('reindexIfNeeded is called by all read handlers', () => {
+    let mockReindexer: { reindexIfNeeded: ReturnType<typeof vi.fn> }
+
+    beforeEach(() => {
+      mockReindexer = {
+        reindexIfNeeded: vi.fn().mockResolvedValue(0),
+      }
+      ctx.reindexer = mockReindexer as any
+    })
+
+    it('handleListProjects calls reindexIfNeeded', async () => {
+      await handleListProjects(ctx)
+      expect(mockReindexer.reindexIfNeeded).toHaveBeenCalledTimes(1)
+    })
+
+    it('handleGetProjectOutline calls reindexIfNeeded', async () => {
+      await handleGetProjectOutline(ctx, {})
+      expect(mockReindexer.reindexIfNeeded).toHaveBeenCalledTimes(1)
+    })
+
+    it('handleGetFileOutline calls reindexIfNeeded', async () => {
+      await handleGetFileOutline(ctx, { filePath: 'src/order/CreateOrderHandler.java' })
+      expect(mockReindexer.reindexIfNeeded).toHaveBeenCalledTimes(1)
+    })
+
+    it('handleSearchSymbols calls reindexIfNeeded', async () => {
+      await handleSearchSymbols(ctx, { query: 'order' })
+      expect(mockReindexer.reindexIfNeeded).toHaveBeenCalledTimes(1)
+    })
+
+    it('handleGetSymbol calls reindexIfNeeded', async () => {
+      await handleGetSymbol(ctx, { symbolId: 's1' })
+      expect(mockReindexer.reindexIfNeeded).toHaveBeenCalledTimes(1)
+    })
+
+    it('handleGetSymbols calls reindexIfNeeded', async () => {
+      await handleGetSymbols(ctx, { symbolIds: ['s1'] })
+      expect(mockReindexer.reindexIfNeeded).toHaveBeenCalledTimes(1)
+    })
+
+    it('handleSearchSchema calls reindexIfNeeded', async () => {
+      await handleSearchSchema(ctx, { query: 'orders' })
+      expect(mockReindexer.reindexIfNeeded).toHaveBeenCalledTimes(1)
+    })
+
+    it('handleGetContextForTask calls reindexIfNeeded (via handleSearchSymbols)', async () => {
+      await handleGetContextForTask(ctx, { task: 'order creation' })
+      // handleGetContextForTask calls handleSearchSymbols internally, which calls reindexIfNeeded
+      expect(mockReindexer.reindexIfNeeded).toHaveBeenCalled()
+    })
+
+    it('does not call reindexIfNeeded when reindexer is null', async () => {
+      ctx.reindexer = null
+      // Should not throw — just skip reindexing
+      await handleListProjects(ctx)
+      await handleGetProjectOutline(ctx, {})
+      await handleGetFileOutline(ctx, { filePath: 'src/order/CreateOrderHandler.java' })
+      await handleSearchSymbols(ctx, { query: 'order' })
+      expect(mockReindexer.reindexIfNeeded).not.toHaveBeenCalled()
     })
   })
 })
