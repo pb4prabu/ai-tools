@@ -32,7 +32,17 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error(`[condex] Failed to download model: ${err.message}`)
-  console.error(`[condex] Model will be downloaded on first use instead.`)
-  // Don't fail the build — model download is best-effort during postbuild
+  console.error(`[condex] FAILED to download model: ${err.message}`)
+  console.error(err.stack)
+  console.error()
+  console.error(`[condex] Possible causes:`)
+  console.error(`  1. Corporate proxy/firewall blocking huggingface.co`)
+  console.error(`  2. No internet access`)
+  console.error(`  3. Disk full or /tmp not writable`)
+  console.error()
+  console.error(`[condex] Workarounds:`)
+  console.error(`  - Set HTTPS_PROXY=http://your-proxy:port and retry`)
+  console.error(`  - Download on a machine with internet, then copy /tmp/condex/models/ to this machine`)
+  console.error(`  - Set CONDEX_MODEL_CACHE_DIR to a writable path if /tmp is restricted`)
+  process.exit(1)
 })
