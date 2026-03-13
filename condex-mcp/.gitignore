@@ -8,3 +8,4 @@ dist/
 .condex/.indexing.lock
 *.tsbuildinfo
 .DS_Store
+opencode.sample.json

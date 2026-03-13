@@ -19,6 +19,7 @@ warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 step() { echo -e "\n${YELLOW}[$1]${NC} $2"; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVER_JS="$SCRIPT_DIR/packages/condex-core/dist/server.js"
 MODEL_DIR="${CONDEX_MODEL_CACHE_DIR:-/tmp/condex/models}"
 MODEL_SUBDIR="$MODEL_DIR/nomic-ai/nomic-embed-text-v1.5"
 ONNX_DIR="$MODEL_SUBDIR/onnx"
@@ -100,17 +101,15 @@ echo "========================================="
 echo "  Verifying setup..."
 echo "========================================="
 
-# Quick check: can we load sqlite-vec and the model?
+# Quick check: can we load sqlite-vec?
 cd "$SCRIPT_DIR"
-npx tsx -e "
-import Database from 'better-sqlite3'
-import { createRequire } from 'node:module'
-const db = new Database(':memory:')
-const r = createRequire(import.meta.url)
-const sv = r('sqlite-vec')
-sv.load(db)
-db.exec('CREATE VIRTUAL TABLE t USING vec0(id TEXT PRIMARY KEY, e float[4])')
-console.log('  sqlite-vec: OK')
+node -e "
+const Database = require('better-sqlite3');
+const sqliteVec = require('sqlite-vec');
+const db = new Database(':memory:');
+sqliteVec.load(db);
+db.exec('CREATE VIRTUAL TABLE t USING vec0(id TEXT PRIMARY KEY, e float[4])');
+console.log('  sqlite-vec: OK');
 " 2>&1 | grep -E "OK|Error|FAIL" || fail "sqlite-vec check failed"
 
 if [ -f "$ONNX_DIR/model_quantized.onnx" ]; then
@@ -120,18 +119,72 @@ else
   exit 1
 fi
 
+# ── Generate opencode.json sample ─────────────────
+SAMPLE_CONFIG="$SCRIPT_DIR/opencode.sample.json"
+cat > "$SAMPLE_CONFIG" <<JSONEOF
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "condex-bm25": {
+      "type": "local",
+      "command": ["node", "$SERVER_JS"],
+      "environment": { "CONDEX_SEARCH_MODE": "bm25" },
+      "enabled": true
+    },
+    "condex-vector": {
+      "type": "local",
+      "command": ["node", "$SERVER_JS"],
+      "environment": { "CONDEX_SEARCH_MODE": "vector" },
+      "enabled": true
+    },
+    "condex-hybrid": {
+      "type": "local",
+      "command": ["node", "$SERVER_JS"],
+      "environment": { "CONDEX_SEARCH_MODE": "hybrid" },
+      "enabled": false
+    },
+    "condex-smart": {
+      "type": "local",
+      "command": ["node", "$SERVER_JS"],
+      "environment": { "CONDEX_SEARCH_MODE": "smart" },
+      "enabled": true
+    }
+  },
+  "instructions": [
+    "This project has Condex MCP configured for token-efficient code navigation.",
+    "PREFER Condex MCP tools over reading raw files:",
+    "- Use search_symbols to find classes, methods, interfaces by name or description",
+    "- Use get_project_outline to understand project structure and packages",
+    "- Use get_file_outline to see symbols in a file before reading the whole file",
+    "- Use get_symbol to read specific method/class source code (not entire files)",
+    "- Use get_context_for_task to get relevant code context for a coding task",
+    "- Use search_schema to find database tables and columns",
+    "- Use index_folder --full after major code changes to re-index"
+  ]
+}
+JSONEOF
+ok "Generated opencode.sample.json"
+
 echo ""
 echo "========================================="
 echo -e "  ${GREEN}Setup complete!${NC}"
 echo "========================================="
 echo ""
 echo "  Model cache: $MODEL_SUBDIR"
-echo "  Server:      packages/condex-core/dist/server.js"
-echo ""
-echo "  Usage (MCP):"
-echo "    cd /path/to/your/project"
-echo "    CONDEX_SEARCH_MODE=vector node $SCRIPT_DIR/packages/condex-core/dist/server.js"
+echo "  Server:      $SERVER_JS"
 echo ""
 echo "  Quick test:"
-echo "    npx tsx test-diagnose.ts"
+echo "    cd $SCRIPT_DIR && npx tsx test-diagnose.ts"
+echo ""
+echo "========================================="
+echo "  MCP Configuration"
+echo "========================================="
+echo ""
+echo "  A sample config has been generated at:"
+echo "    $SAMPLE_CONFIG"
+echo ""
+echo "  To use Condex in your project, copy it:"
+echo "    cp $SAMPLE_CONFIG /path/to/your/project/opencode.json"
+echo ""
+echo "  Or merge the \"mcp\" block into your existing opencode.json."
 echo ""
