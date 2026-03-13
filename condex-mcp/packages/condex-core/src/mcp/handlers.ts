@@ -299,7 +299,11 @@ export async function handleSearchSymbols(
   } else if (ctx.searchMode === 'vector') {
     // ── Vector only — distance threshold, no count limit ──
     if (!ctx.embedder) {
-      return textResult('Vector search unavailable: embedder not loaded.')
+      return textResult(
+        'Vector search unavailable: embedder not loaded. ' +
+        'Run "npm run download-model" to install the embedding model, ' +
+        'or switch to CONDEX_SEARCH_MODE=bm25.'
+      )
     }
     const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
     topScore = vecResults.length > 0 ? (1 - vecResults[0].distance) : 0
