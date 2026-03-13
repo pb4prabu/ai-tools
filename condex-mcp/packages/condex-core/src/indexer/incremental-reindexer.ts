@@ -17,6 +17,7 @@ import type { Embedder } from '../embeddings/local-embed.js'
 import { glob } from 'glob'
 import type { CondexConfig } from '../types/config.js'
 import { DEFAULT_CONFIG } from '../types/config.js'
+import { parseGenericFile, isBinaryExtension } from './generic-file-parser.js'
 
 export type ParseFileWithRefsFn = (content: string, opts: {
   projectId: string
@@ -83,16 +84,17 @@ export class IncrementalReindexer {
    * Returns the number of files re-indexed (0 if nothing changed).
    */
   async reindexIfNeeded(): Promise<number> {
-    if (!this.parseFileWithRefs) return 0
     if (!this.initialized) return 0
 
-    const changedFiles = await this.detectChangedFiles()
+    const { languageFiles, supplementalFiles } = await this.detectChangedFiles()
+    const changedFiles = [...languageFiles, ...supplementalFiles]
     if (changedFiles.length === 0) return 0
 
     console.error(`[condex] Incremental re-index: ${changedFiles.length} file(s) changed`)
 
     const allNewSymbols: Symbol[] = []
     const allNewRefs: SymbolRef[] = []
+    const langFileSet = new Set(languageFiles)
 
     for (const relPath of changedFiles) {
       const absPath = path.join(this.projectRoot, relPath)
@@ -112,16 +114,25 @@ export class IncrementalReindexer {
       // Remove old symbols for this file
       this.removeSymbolsForFile(relPath)
 
-      // Parse fresh symbols
-      try {
-        const result = this.parseFileWithRefs!(content, {
+      // Route to appropriate parser
+      if (langFileSet.has(relPath) && this.parseFileWithRefs) {
+        try {
+          const result = this.parseFileWithRefs(content, {
+            projectId: this.projectId,
+            filePath: relPath,
+          })
+          allNewSymbols.push(...result.symbols)
+          allNewRefs.push(...result.refs)
+        } catch (err: any) {
+          console.error(`[condex] Error re-parsing ${relPath}: ${err.message}`)
+        }
+      } else {
+        // Generic file
+        const sym = parseGenericFile(content, {
           projectId: this.projectId,
           filePath: relPath,
         })
-        allNewSymbols.push(...result.symbols)
-        allNewRefs.push(...result.refs)
-      } catch (err: any) {
-        console.error(`[condex] Error re-parsing ${relPath}: ${err.message}`)
+        if (sym) allNewSymbols.push(sym)
       }
     }
 
@@ -148,22 +159,40 @@ export class IncrementalReindexer {
   }
 
   /**
-   * Scan source files and return paths that have changed since last hash.
+   * Scan source files and return changed paths, split into language and supplemental.
    */
-  private async detectChangedFiles(): Promise<string[]> {
+  private async detectChangedFiles(): Promise<{
+    languageFiles: string[]
+    supplementalFiles: string[]
+  }> {
     const language = detectLanguage(this.projectRoot)
     const sourceFiles = await findSourceFiles(this.projectRoot, language, this.config)
-    const changed: string[] = []
+    const sourceFileSet = new Set(sourceFiles)
 
-    for (const relPath of sourceFiles) {
+    // Find supplemental (non-language) files
+    const exclude = this.config.exclude ?? DEFAULT_CONFIG.exclude
+    const allExclude = [...new Set([...exclude, '**/.condex/**'])]
+    const allFiles = await glob('**/*', {
+      cwd: this.projectRoot,
+      ignore: allExclude,
+      nodir: true,
+    })
+    const supplementalFileList = allFiles
+      .filter(f => !sourceFileSet.has(f) && !isBinaryExtension(f))
+
+    const allFilesToCheck = [...sourceFiles, ...supplementalFileList]
+    const changedLang: string[] = []
+    const changedSupp: string[] = []
+
+    for (const relPath of allFilesToCheck) {
       const absPath = path.join(this.projectRoot, relPath)
       let content: string
       try {
         content = fs.readFileSync(absPath, 'utf-8')
       } catch {
-        // File unreadable/deleted — treat as changed if we had it
         if (this.fileHashes.has(relPath)) {
-          changed.push(relPath)
+          if (sourceFileSet.has(relPath)) changedLang.push(relPath)
+          else changedSupp.push(relPath)
         }
         continue
       }
@@ -172,21 +201,27 @@ export class IncrementalReindexer {
       const previousHash = this.fileHashes.get(relPath)
 
       if (previousHash !== currentHash) {
-        changed.push(relPath)
+        if (sourceFileSet.has(relPath)) changedLang.push(relPath)
+        else changedSupp.push(relPath)
       }
     }
 
-    // Also detect deleted files (in hash map but no longer on disk)
+    // Detect deleted files
+    const allFileSet = new Set(allFilesToCheck)
     for (const relPath of this.fileHashes.keys()) {
-      if (!sourceFiles.includes(relPath)) {
+      if (!allFileSet.has(relPath)) {
         const absPath = path.join(this.projectRoot, relPath)
         if (!fs.existsSync(absPath)) {
-          changed.push(relPath)
+          if (sourceFileSet.has(relPath)) changedLang.push(relPath)
+          else changedSupp.push(relPath)
         }
       }
     }
 
-    return [...new Set(changed)]
+    return {
+      languageFiles: [...new Set(changedLang)],
+      supplementalFiles: [...new Set(changedSupp)],
+    }
   }
 
   /**
@@ -257,20 +292,36 @@ function hashContent(content: string): string {
 }
 
 function detectLanguage(projectRoot: string): string {
-  const markers: Record<string, string> = {
-    'pom.xml': 'java',
-    'build.gradle': 'java',
-    'build.gradle.kts': 'java',
-    'package.json': 'typescript',
-    'tsconfig.json': 'typescript',
-    'requirements.txt': 'python',
-    'pyproject.toml': 'python',
+  // Priority-ordered: Java > TypeScript > Python
+  // Use glob to search any depth (real projects can be 20+ levels deep)
+  const ignore = ['**/node_modules/**', '**/build/**', '**/target/**', '**/dist/**', '**/.git/**', '**/.condex/**']
+
+  const javaMarkers = ['pom.xml', 'build.gradle', 'build.gradle.kts']
+  for (const marker of javaMarkers) {
+    try {
+      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
+      if (found.length > 0) return 'java'
+    } catch { /* ignore */ }
   }
-  for (const [file, lang] of Object.entries(markers)) {
-    if (fs.existsSync(path.join(projectRoot, file))) {
-      return lang
-    }
+
+  const tsMarkers = ['tsconfig.json']
+  for (const marker of tsMarkers) {
+    try {
+      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
+      if (found.length > 0) return 'typescript'
+    } catch { /* ignore */ }
   }
+
+  if (fs.existsSync(path.join(projectRoot, 'package.json'))) return 'typescript'
+
+  const pyMarkers = ['requirements.txt', 'pyproject.toml']
+  for (const marker of pyMarkers) {
+    try {
+      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
+      if (found.length > 0) return 'python'
+    } catch { /* ignore */ }
+  }
+
   return 'java'
 }
 

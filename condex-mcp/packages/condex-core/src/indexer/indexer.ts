@@ -27,6 +27,7 @@ import {
   clearProjectData,
 } from '../store/sqlite-store.js'
 import { loadProject } from '../store/loader.js'
+import { parseGenericFile, isBinaryExtension } from './generic-file-parser.js'
 
 const TOOL_VERSION = '1.0.0'
 
@@ -82,8 +83,8 @@ export async function indexProject(
   const projectName = path.basename(projectRoot)
   const projectId = generateNamespace(projectRoot)
 
-  // Read config (optional)
-  const config = await readCondexConfig(safeFs) ?? { ...DEFAULT_CONFIG }
+  // Read config (optional) — use empty object so language-specific patterns are used
+  const config: Partial<CondexConfig> = await readCondexConfig(safeFs) ?? {}
 
   // Ensure .condex/index/ dirs exist
   await initCondexDir(safeFs)
@@ -105,8 +106,22 @@ export async function indexProject(
     const existingHashes = existingMeta?.fileHashes ?? {}
 
     // Detect language & find source files
-    const language = config.language === 'auto' ? detectLanguage(projectRoot) : config.language
+    const language = config.language === 'auto' || !config.language
+      ? detectLanguage(projectRoot)
+      : config.language
     const sourceFiles = await findSourceFiles(projectRoot, language ?? 'java', config)
+
+    // Log file discovery stats for debugging
+    const extCounts: Record<string, number> = {}
+    for (const f of sourceFiles) {
+      const ext = path.extname(f) || '(no ext)'
+      extCounts[ext] = (extCounts[ext] ?? 0) + 1
+    }
+    console.error(`[condex] Language: ${language}, Files found: ${sourceFiles.length}`)
+    console.error(`[condex] Extensions: ${JSON.stringify(extCounts)}`)
+    if (config.include) {
+      console.error(`[condex] Using config include: ${JSON.stringify(config.include)}`)
+    }
 
     // Detect architecture
     let architecture: string | null = null
@@ -124,6 +139,7 @@ export async function indexProject(
     let filesProcessed = 0
     let filesSkipped = 0
 
+    let parseErrors = 0
     for (const relPath of sourceFiles) {
       const absPath = path.join(projectRoot, relPath)
       let content: string
@@ -157,6 +173,7 @@ export async function indexProject(
           filesProcessed++
         } catch (err: any) {
           console.error(`[condex] Error parsing ${relPath}: ${err.message}`)
+          parseErrors++
           filesSkipped++
         }
       } else if (opts.parseFile) {
@@ -166,10 +183,44 @@ export async function indexProject(
           filesProcessed++
         } catch (err: any) {
           console.error(`[condex] Error parsing ${relPath}: ${err.message}`)
+          parseErrors++
           filesSkipped++
         }
       } else {
         filesSkipped++
+      }
+    }
+    if (parseErrors > 0) {
+      console.error(`[condex] WARNING: ${parseErrors} files failed to parse`)
+    }
+
+    // ── Parse supplemental (non-language) files as generic file symbols ──
+    const primaryFileSet = new Set(sourceFiles)
+    const supplementalFiles = await findSupplementalFiles(projectRoot, config, primaryFileSet)
+    if (supplementalFiles.length > 0) {
+      console.error(`[condex] Supplemental files: ${supplementalFiles.length} non-language files`)
+      for (const relPath of supplementalFiles) {
+        const absPath = path.join(projectRoot, relPath)
+        let content: string
+        try {
+          content = fs.readFileSync(absPath, 'utf-8')
+        } catch {
+          continue
+        }
+
+        const hash = hashContent(content)
+        newHashes[relPath] = hash
+
+        // Incremental: skip unchanged files
+        if (!opts.full && existingHashes[relPath] === hash) {
+          continue
+        }
+
+        const sym = parseGenericFile(content, { projectId, filePath: relPath })
+        if (sym) {
+          allSymbols.push(sym)
+          filesProcessed++
+        }
       }
     }
 
@@ -268,21 +319,38 @@ export async function indexProject(
 }
 
 function detectLanguage(projectRoot: string): string {
-  // Simple heuristic: check for common markers
-  const markers: Record<string, string> = {
-    'pom.xml': 'java',
-    'build.gradle': 'java',
-    'build.gradle.kts': 'java',
-    'package.json': 'typescript',
-    'tsconfig.json': 'typescript',
-    'requirements.txt': 'python',
-    'pyproject.toml': 'python',
+  // Priority-ordered: Java > TypeScript > Python
+  // Use glob to search any depth (real projects can be 20+ levels deep)
+  const ignore = ['**/node_modules/**', '**/build/**', '**/target/**', '**/dist/**', '**/.git/**', '**/.condex/**']
+
+  // Check Java markers at any depth
+  const javaMarkers = ['pom.xml', 'build.gradle', 'build.gradle.kts']
+  for (const marker of javaMarkers) {
+    try {
+      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
+      if (found.length > 0) return 'java'
+    } catch { /* ignore */ }
   }
 
-  for (const [file, lang] of Object.entries(markers)) {
-    if (fs.existsSync(path.join(projectRoot, file))) {
-      return lang
-    }
+  // Check TypeScript markers at any depth
+  const tsMarkers = ['tsconfig.json']
+  for (const marker of tsMarkers) {
+    try {
+      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
+      if (found.length > 0) return 'typescript'
+    } catch { /* ignore */ }
+  }
+
+  // Check for package.json only at root (monorepos have it for workspace management)
+  if (fs.existsSync(path.join(projectRoot, 'package.json'))) return 'typescript'
+
+  // Check Python markers at any depth
+  const pyMarkers = ['requirements.txt', 'pyproject.toml']
+  for (const marker of pyMarkers) {
+    try {
+      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
+      if (found.length > 0) return 'python'
+    } catch { /* ignore */ }
   }
 
   return 'java' // default
@@ -332,4 +400,29 @@ async function findSourceFiles(
   }
 
   return [...new Set(files)].sort()
+}
+
+/**
+ * Find supplemental (non-language) text files that should also be indexed
+ * as generic file-level symbols.
+ * Excludes files already found by the language-specific search and binary files.
+ */
+async function findSupplementalFiles(
+  projectRoot: string,
+  config: Partial<CondexConfig>,
+  alreadyFound: Set<string>
+): Promise<string[]> {
+  const exclude = config.exclude ?? DEFAULT_CONFIG.exclude
+  const allExclude = [...new Set([...exclude, '**/.condex/**'])]
+
+  const allFiles = await glob('**/*', {
+    cwd: projectRoot,
+    ignore: allExclude,
+    nodir: true,
+  })
+
+  return allFiles
+    .filter(f => !alreadyFound.has(f))
+    .filter(f => !isBinaryExtension(f))
+    .sort()
 }

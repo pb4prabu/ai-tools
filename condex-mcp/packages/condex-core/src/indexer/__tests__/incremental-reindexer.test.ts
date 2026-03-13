@@ -2,10 +2,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import crypto from 'node:crypto'
 import Database from 'better-sqlite3'
 import { createSchema, insertProject, insertSymbols } from '../../store/sqlite-store.js'
 import { IncrementalReindexer } from '../incremental-reindexer.js'
 import type { Symbol } from '../../types/symbol.js'
+
+function contentHash(content: string): string {
+  return crypto.createHash('sha256').update(content).digest('hex').slice(0, 20)
+}
+
+const POM_CONTENT = '<project/>'
 
 function sym(overrides: Partial<Symbol>): Symbol {
   return {
@@ -66,7 +73,7 @@ describe('IncrementalReindexer', () => {
     fs.writeFileSync(absPath, content)
   }
 
-  it('returns 0 when no parser is provided', async () => {
+  it('indexes supplemental files even when no language parser is provided', async () => {
     const reindexer = new IncrementalReindexer({
       db,
       projectRoot: tmpDir,
@@ -74,7 +81,8 @@ describe('IncrementalReindexer', () => {
     })
     reindexer.initializeHashes({})
     const result = await reindexer.reindexIfNeeded()
-    expect(result).toBe(0)
+    // pom.xml is detected as a supplemental file and indexed as a generic file symbol
+    expect(result).toBeGreaterThanOrEqual(1)
   })
 
   it('returns 0 when not initialized', async () => {
@@ -113,8 +121,8 @@ describe('IncrementalReindexer', () => {
       parseFileWithRefs,
     })
 
-    // Initialize with empty hashes (no files tracked yet)
-    reindexer.initializeHashes({})
+    // Initialize with pom.xml hash so only new Java files are detected
+    reindexer.initializeHashes({ 'pom.xml': contentHash(POM_CONTENT) })
 
     // Create a new java file
     createJavaFile('src/Order.java', 'public class Order {}')
@@ -172,8 +180,8 @@ describe('IncrementalReindexer', () => {
       parseFileWithRefs,
     })
 
-    // Initialize with the hash of the initial content
-    reindexer.initializeHashes({ 'src/Order.java': initialHash })
+    // Initialize with hashes of known files
+    reindexer.initializeHashes({ 'src/Order.java': initialHash, 'pom.xml': contentHash(POM_CONTENT) })
 
     // Modify the file
     createJavaFile('src/Order.java', 'public class Order implements Serializable {}')
@@ -203,7 +211,7 @@ describe('IncrementalReindexer', () => {
       parseFileWithRefs,
     })
 
-    reindexer.initializeHashes({ 'src/Order.java': hash })
+    reindexer.initializeHashes({ 'src/Order.java': hash, 'pom.xml': contentHash(POM_CONTENT) })
 
     const result = await reindexer.reindexIfNeeded()
     expect(result).toBe(0)
@@ -230,8 +238,8 @@ describe('IncrementalReindexer', () => {
       parseFileWithRefs,
     })
 
-    // Initialize with hash for a file that no longer exists on disk
-    reindexer.initializeHashes({ 'src/Deleted.java': 'oldhash' })
+    // Initialize with hash for a file that no longer exists on disk + pom.xml
+    reindexer.initializeHashes({ 'src/Deleted.java': 'oldhash', 'pom.xml': contentHash(POM_CONTENT) })
 
     const result = await reindexer.reindexIfNeeded()
     expect(result).toBe(1) // deleted file counts as changed
@@ -290,7 +298,7 @@ describe('IncrementalReindexer', () => {
       prepareSymbolText,
     })
 
-    reindexer.initializeHashes({})
+    reindexer.initializeHashes({ 'pom.xml': contentHash(POM_CONTENT) })
     createJavaFile('src/Vec.java', 'public class Vec {}')
 
     const result = await reindexer.reindexIfNeeded()
@@ -339,7 +347,7 @@ describe('IncrementalReindexer', () => {
       parseFileWithRefs,
     })
 
-    reindexer.initializeHashes({})
+    reindexer.initializeHashes({ 'pom.xml': contentHash(POM_CONTENT) })
     createJavaFile('src/A.java', 'public class A {}')
     createJavaFile('src/B.java', 'public class B {}')
 
@@ -373,7 +381,7 @@ describe('IncrementalReindexer', () => {
       parseFileWithRefs,
     })
 
-    reindexer.initializeHashes({})
+    reindexer.initializeHashes({ 'pom.xml': contentHash(POM_CONTENT) })
     createJavaFile('src/Stable.java', 'public class Stable {}')
 
     // First call — detects the new file

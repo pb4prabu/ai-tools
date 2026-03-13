@@ -7,6 +7,7 @@ export type SymbolKind =
   | 'constructor'
   | 'enum'
   | 'annotation_type'
+  | 'file'
 
 export type SpringRole =
   | 'REST_CONTROLLER'

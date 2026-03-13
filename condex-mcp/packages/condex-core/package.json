@@ -15,7 +15,8 @@
     "build": "tsc",
     "download-model": "tsx src/scripts/download-model.ts",
     "dev": "tsx src/server.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "CONDEX_INTEGRATION=1 vitest run src/__tests__/integration"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
