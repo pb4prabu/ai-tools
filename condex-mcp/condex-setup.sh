@@ -20,7 +20,7 @@ step() { echo -e "\n${YELLOW}[$1]${NC} $2"; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_JS="$SCRIPT_DIR/packages/condex-core/dist/server.js"
-MODEL_DIR="${CONDEX_MODEL_CACHE_DIR:-/tmp/condex/models}"
+MODEL_DIR="${CONDEX_MODEL_CACHE_DIR:-$HOME/.condex/models}"
 MODEL_SUBDIR="$MODEL_DIR/nomic-ai/nomic-embed-text-v1.5"
 ONNX_DIR="$MODEL_SUBDIR/onnx"
 BASE_URL="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main"

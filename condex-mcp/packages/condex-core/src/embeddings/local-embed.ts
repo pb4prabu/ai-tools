@@ -87,9 +87,9 @@ export function getCacheDir(): string {
     return process.env.CONDEX_MODEL_CACHE_DIR
   }
 
-  // Default: /tmp/condex/models/ — universally writable, no permission issues.
-  // Works across macOS/Linux without needing project-root write access.
-  return path.join('/tmp', 'condex', 'models')
+  // Default: ~/.condex/models/ — persists across reboots (unlike /tmp).
+  const home = process.env.HOME || process.env.USERPROFILE || '/tmp'
+  return path.join(home, '.condex', 'models')
 }
 
 /**
