@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { SafeFS } from '../security/fs-guard.js'
 import { searchBM25, type BM25Result } from '../retrieval/bm25.js'
@@ -438,7 +439,6 @@ export async function handleGetSymbol(
     sourceCode = snippet.toString('utf-8')
 
     // Verify content hash
-    const crypto = require('node:crypto')
     const actualHash = crypto.createHash('sha256').update(snippet).digest('hex').slice(0, 12)
     if (symbol.contentHash && actualHash !== symbol.contentHash) {
       hashMismatch = true
