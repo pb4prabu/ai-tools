@@ -1,0 +1,17 @@
+// Public API — exported from @condex-ai/core
+export * from './types/index.js'
+export { SafeFS } from './security/fs-guard.js'
+export { generateNamespace, getProjectRoot } from './namespace/namespace.js'
+export { createSchema, insertProject, insertSymbols, insertRefs, getSymbolById, getSymbolsByIds, getSymbolsByFile, getProjectOutline, getRelatedSymbolIds, clearProjectData } from './store/sqlite-store.js'
+export { loadProject } from './store/loader.js'
+export { readMeta, readCondexConfig, initCondexDir, writeSymbolFile, writeMeta, acquireIndexLock, releaseIndexLock, hashContent } from './store/fs-store.js'
+export { indexProject, type IndexResult, type ParseFileFn, type ParseFileWithRefsFn, type DetectArchFn } from './indexer/indexer.js'
+export { IncrementalReindexer } from './indexer/incremental-reindexer.js'
+export { searchBM25, type BM25Result as BM25SearchResult } from './retrieval/bm25.js'
+export { applyConfidenceGate } from './retrieval/confidence-gate.js'
+export { countTokens, estimateTokensFromBytes } from './token/counter.js'
+export { SavingsTracker } from './token/savings.js'
+// Vector search (opt-in)
+export { getEmbedder, prepareSymbolText, resetEmbedder, type Embedder } from './embeddings/local-embed.js'
+export { loadVec, insertVectors, clearVectors, vectorSearch, type VectorResult } from './retrieval/vector-search.js'
+export { rrfFusion, type FusedResult } from './retrieval/rrf-fusion.js'
