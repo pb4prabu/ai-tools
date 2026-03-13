@@ -138,15 +138,10 @@ async function main() {
       loadVec(db)
       console.error(`[condex] sqlite-vec loaded, symbol_vectors table ready`)
     } catch (err: any) {
-      console.error(`[condex] Failed to load sqlite-vec extension: ${err.message}`)
-      if (SEARCH_MODE === 'vector') {
-        throw new Error(
-          `sqlite-vec is required for vector search mode but failed to load: ${err.message}. ` +
-          `Install sqlite-vec or use CONDEX_SEARCH_MODE=bm25.`
-        )
-      }
-      // hybrid/smart can degrade to BM25
-      console.error(`[condex] Vector search will not be available, falling back to BM25`)
+      throw new Error(
+        `sqlite-vec is required for ${SEARCH_MODE} search mode but failed to load: ${err.message}. ` +
+        `Install sqlite-vec or use CONDEX_SEARCH_MODE=bm25.`
+      )
     }
 
     try {
@@ -185,16 +180,10 @@ async function main() {
         console.error(`[condex] Vector index built for ${allSymbols.length} symbols`)
       }
     } catch (err: any) {
-      console.error(`[condex] Failed to initialize embedder: ${err.message}`)
-      if (SEARCH_MODE === 'vector') {
-        // vector mode requires the embedder — fail fast so the user knows immediately
-        throw new Error(
-          `Embedder is required for vector search mode but failed to initialize: ${err.message}. ` +
-          `Either fix the embedder setup (run 'npm run download-model') or use CONDEX_SEARCH_MODE=bm25.`
-        )
-      }
-      // hybrid/smart can degrade to BM25
-      console.error(`[condex] Falling back to BM25-only mode (embedder unavailable)`)
+      throw new Error(
+        `Embedder is required for ${SEARCH_MODE} search mode but failed to initialize: ${err.message}. ` +
+        `Run 'npm run download-model' to install the embedding model or use CONDEX_SEARCH_MODE=bm25.`
+      )
     }
   }
 
