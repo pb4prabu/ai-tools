@@ -33,5 +33,6 @@ async function main() {
 
 main().catch(err => {
   console.error(`[condex] Failed to download model: ${err.message}`)
-  process.exit(1)
+  console.error(`[condex] Model will be downloaded on first use instead.`)
+  // Don't fail the build — model download is best-effort during postbuild
 })

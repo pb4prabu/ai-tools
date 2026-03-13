@@ -4,6 +4,8 @@
  * 100% local — no external API calls.
  */
 
+import path from 'node:path'
+
 let embedderInstance: Embedder | null = null
 
 export interface Embedder {
@@ -84,7 +86,6 @@ export function getCacheDir(): string {
 
   // Default: .condex/models/ inside the current working directory (project root).
   // This avoids writing anything under ~/ which may be restricted in corporate environments.
-  const path = require('node:path')
   return path.join(process.cwd(), '.condex', 'models')
 }
 
