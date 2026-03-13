@@ -2,6 +2,7 @@
  * Vector similarity search using sqlite-vec.
  * Queries the symbol_vectors virtual table for nearest neighbors.
  */
+import { createRequire } from 'node:module'
 import type Database from 'better-sqlite3'
 import type { Embedder } from '../embeddings/local-embed.js'
 
@@ -15,7 +16,8 @@ export interface VectorResult {
  * Creates the symbol_vectors virtual table if needed.
  */
 export function loadVec(db: Database.Database): void {
-  const sqliteVec = require('sqlite-vec')
+  const esmRequire = createRequire(import.meta.url)
+  const sqliteVec = esmRequire('sqlite-vec')
   sqliteVec.load(db)
 
   db.exec(`

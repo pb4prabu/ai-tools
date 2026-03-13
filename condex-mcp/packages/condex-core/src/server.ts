@@ -133,57 +133,62 @@ async function main() {
   let embedder: Embedder | null = null
 
   if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid' || SEARCH_MODE === 'smart') {
-    // Always create the symbol_vectors table so queries don't crash with "no such table"
+    // Step 1: Load sqlite-vec extension — MUST succeed for vector modes
+    console.error(`[condex] [1/3] Loading sqlite-vec extension...`)
     try {
       loadVec(db)
-      console.error(`[condex] sqlite-vec loaded, symbol_vectors table ready`)
+      console.error(`[condex] [1/3] sqlite-vec loaded, symbol_vectors table ready`)
     } catch (err: any) {
-      throw new Error(
-        `sqlite-vec is required for ${SEARCH_MODE} search mode but failed to load: ${err.message}. ` +
-        `Install sqlite-vec or use CONDEX_SEARCH_MODE=bm25.`
-      )
+      console.error(`[condex] FATAL: sqlite-vec failed to load: ${err.message}`)
+      console.error(err.stack)
+      console.error(`[condex] Fix: run "npm install" to get sqlite-vec native binary for your platform, or use CONDEX_SEARCH_MODE=bm25`)
+      process.exit(1)
     }
 
+    // Step 2: Load embedding model — MUST succeed for vector modes
+    console.error(`[condex] [2/3] Loading embedding model...`)
     try {
-      const { getEmbedder, prepareSymbolText, ensureModelDownloaded, getCacheDir } = await import('./embeddings/local-embed.js')
+      const { getEmbedder: getEmbed, ensureModelDownloaded, getCacheDir } = await import('./embeddings/local-embed.js')
       const modelCacheDir = getCacheDir()
       console.error(`[condex] Model cache directory: ${modelCacheDir}`)
-      console.error(`[condex] Loading embedding model (fallback download ~100MB if not pre-cached)...`)
-      console.error(`[condex] Tip: Run 'npm run download-model' to pre-download the model and avoid startup delay.`)
       await ensureModelDownloaded()
-      embedder = await getEmbedder()
-      console.error(`[condex] Embedder ready (${embedder.dimensions} dimensions)`)
-
-      // Build vector index for existing symbols
-      const allSymbols = db.prepare(
-        'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
-      ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]
-
-      if (allSymbols.length > 0) {
-        console.error(`[condex] Building vector index for ${allSymbols.length} symbols...`)
-        const batchSize = 50
-        for (let i = 0; i < allSymbols.length; i += batchSize) {
-          const batch = allSymbols.slice(i, i + batchSize)
-          const texts = batch.map(s => prepareSymbolText({
-            qualifiedName: s.qualified_name,
-            signature: s.signature,
-            javadoc: s.javadoc,
-            kind: s.kind,
-          }))
-          const embeddings = await embedder.embedBatch(texts)
-          const vectors = batch.map((s, idx) => ({
-            symbolId: s.id,
-            embedding: embeddings[idx],
-          }))
-          insertVectors(db, vectors)
-        }
-        console.error(`[condex] Vector index built for ${allSymbols.length} symbols`)
-      }
+      embedder = await getEmbed()
+      console.error(`[condex] [2/3] Embedder ready (${embedder.dimensions} dimensions)`)
     } catch (err: any) {
-      throw new Error(
-        `Embedder is required for ${SEARCH_MODE} search mode but failed to initialize: ${err.message}. ` +
-        `Run 'npm run download-model' to install the embedding model or use CONDEX_SEARCH_MODE=bm25.`
-      )
+      console.error(`[condex] FATAL: Embedding model failed to load: ${err.message}`)
+      console.error(err.stack)
+      console.error(`[condex] Fix: run "npm run download-model --workspace=packages/condex-core" or use CONDEX_SEARCH_MODE=bm25`)
+      process.exit(1)
+    }
+
+    // Step 3: Build vector index for existing symbols
+    console.error(`[condex] [3/3] Building vector index...`)
+    const { prepareSymbolText } = await import('./embeddings/local-embed.js')
+    const allSymbols = db.prepare(
+      'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
+    ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]
+
+    if (allSymbols.length > 0) {
+      console.error(`[condex] Embedding ${allSymbols.length} symbols...`)
+      const batchSize = 50
+      for (let i = 0; i < allSymbols.length; i += batchSize) {
+        const batch = allSymbols.slice(i, i + batchSize)
+        const texts = batch.map(s => prepareSymbolText({
+          qualifiedName: s.qualified_name,
+          signature: s.signature,
+          javadoc: s.javadoc,
+          kind: s.kind,
+        }))
+        const embeddings = await embedder.embedBatch(texts)
+        const vectors = batch.map((s, idx) => ({
+          symbolId: s.id,
+          embedding: embeddings[idx],
+        }))
+        insertVectors(db, vectors)
+      }
+      console.error(`[condex] [3/3] Vector index built for ${allSymbols.length} symbols`)
+    } else {
+      console.error(`[condex] [3/3] WARNING: 0 symbols to embed — vector index is empty`)
     }
   }
 
