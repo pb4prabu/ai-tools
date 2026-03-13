@@ -214,8 +214,8 @@ describe('MCP handlers', () => {
   })
 
   describe('search_schema', () => {
-    it('returns empty for no schema data', () => {
-      const result = handleSearchSchema(ctx, { query: 'orders' })
+    it('returns empty for no schema data', async () => {
+      const result = await handleSearchSchema(ctx, { query: 'orders' })
       expect(result.content[0].text).toContain('No schema matches')
     })
   })

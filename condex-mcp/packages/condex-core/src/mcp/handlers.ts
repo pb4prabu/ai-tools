@@ -16,6 +16,7 @@ import {
   clearProjectData,
 } from '../store/sqlite-store.js'
 import { buildMeta, countTokens } from './meta.js'
+import type { IncrementalReindexer } from '../indexer/incremental-reindexer.js'
 
 export type SearchMode = 'bm25' | 'vector' | 'hybrid' | 'smart'
 
@@ -35,6 +36,7 @@ export interface HandlerContext {
   searchMode: SearchMode
   embedder: Embedder | null
   thresholds: SearchThresholds
+  reindexer?: IncrementalReindexer | null
 }
 
 type ToolResult = {
@@ -250,6 +252,11 @@ export async function handleSearchSymbols(
     filePattern?: string
   }
 ): Promise<ToolResult> {
+  // Incremental re-index: detect and re-parse changed files before searching
+  if (ctx.reindexer) {
+    await ctx.reindexer.reindexIfNeeded()
+  }
+
   const startMs = Date.now()
   const pid = args.projectId ?? ctx.projectId
   const { thresholds } = ctx
@@ -544,10 +551,15 @@ export function handleGetSymbols(
 
 // ── search_schema ─────────────────────────────────────────
 
-export function handleSearchSchema(
+export async function handleSearchSchema(
   ctx: HandlerContext,
   args: { query: string; projectId?: string }
-): ToolResult {
+): Promise<ToolResult> {
+  // Incremental re-index before schema search
+  if (ctx.reindexer) {
+    await ctx.reindexer.reindexIfNeeded()
+  }
+
   const startMs = Date.now()
   const pid = args.projectId ?? ctx.projectId
 

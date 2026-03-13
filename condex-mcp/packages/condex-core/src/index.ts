@@ -6,6 +6,7 @@ export { createSchema, insertProject, insertSymbols, insertRefs, getSymbolById, 
 export { loadProject } from './store/loader.js'
 export { readMeta, readCondexConfig, initCondexDir, writeSymbolFile, writeMeta, acquireIndexLock, releaseIndexLock, hashContent } from './store/fs-store.js'
 export { indexProject, type IndexResult, type ParseFileFn, type ParseFileWithRefsFn, type DetectArchFn } from './indexer/indexer.js'
+export { IncrementalReindexer } from './indexer/incremental-reindexer.js'
 export { searchBM25, type BM25Result as BM25SearchResult } from './retrieval/bm25.js'
 export { applyConfidenceGate } from './retrieval/confidence-gate.js'
 export { countTokens, estimateTokensFromBytes } from './token/counter.js'

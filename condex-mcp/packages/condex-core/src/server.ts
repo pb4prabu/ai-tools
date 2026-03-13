@@ -24,6 +24,7 @@ import { generateNamespace } from './namespace/namespace.js'
 import { createSchema } from './store/sqlite-store.js'
 import { loadProject } from './store/loader.js'
 import { indexProject, type ParseFileFn, type ParseFileWithRefsFn, type DetectArchFn, type ParseSqlFn, type ParseYamlFn } from './indexer/indexer.js'
+import { IncrementalReindexer } from './indexer/incremental-reindexer.js'
 import { TOOL_DEFINITIONS } from './mcp/tools.js'
 import { dispatch } from './mcp/dispatcher.js'
 import { setSavingsTracker } from './mcp/meta.js'
@@ -176,6 +177,40 @@ async function main() {
 
   console.error(`[condex] Thresholds: bm25=${BM25_MIN_SCORE}, vector=${VECTOR_MAX_DISTANCE}, smart_bm25=${SMART_BM25_MIN_SCORE}, smart_vector=${SMART_VECTOR_MAX_DISTANCE}`)
 
+  // Initialize incremental reindexer for query-time change detection
+  let reindexer: IncrementalReindexer | null = null
+  if (javaParsers) {
+    let prepareSymbolTextFn: ((s: { qualifiedName: string; signature: string; javadoc?: string | null; kind?: string }) => string) | undefined
+    if (embedder) {
+      const { prepareSymbolText } = await import('./embeddings/local-embed.js')
+      prepareSymbolTextFn = prepareSymbolText
+    }
+
+    reindexer = new IncrementalReindexer({
+      db,
+      projectRoot: PROJECT_ROOT,
+      projectId: namespace,
+      parseFileWithRefs: javaParsers.parseFileWithRefs,
+      embedder,
+      prepareSymbolText: prepareSymbolTextFn,
+    })
+
+    // Seed the hash cache from the meta.json file hashes (or build from current files)
+    try {
+      const { readMeta } = await import('./store/fs-store.js')
+      const meta = await readMeta(safeFs)
+      if (meta?.fileHashes) {
+        reindexer.initializeHashes(meta.fileHashes)
+        console.error(`[condex] Incremental reindexer ready (tracking ${Object.keys(meta.fileHashes).length} files)`)
+      } else {
+        reindexer.initializeHashes({})
+        console.error(`[condex] Incremental reindexer ready (no prior hashes, will index all on first query)`)
+      }
+    } catch {
+      reindexer.initializeHashes({})
+    }
+  }
+
   // Build handler context
   const ctx: HandlerContext = {
     db,
@@ -191,6 +226,7 @@ async function main() {
       smartBm25MinScore: SMART_BM25_MIN_SCORE,
       smartVectorMaxDistance: SMART_VECTOR_MAX_DISTANCE,
     },
+    reindexer,
   }
 
   // Create MCP server
@@ -230,6 +266,52 @@ async function main() {
         parseYaml: javaParsers.parseYaml,
       })
       ctx.architecture = result.architecture
+
+      // Refresh the reindexer hash cache after manual re-index
+      if (reindexer) {
+        try {
+          const { readMeta: readMetaFn } = await import('./store/fs-store.js')
+          const meta = await readMetaFn(safeFs)
+          if (meta?.fileHashes) {
+            reindexer.initializeHashes(meta.fileHashes)
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Rebuild vector index for all symbols after re-index
+      if (embedder) {
+        try {
+          const { prepareSymbolText: prepSymText } = await import('./embeddings/local-embed.js')
+          const { clearVectors: clearVec } = await import('./retrieval/vector-search.js')
+          const allSymbols = db.prepare(
+            'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
+          ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]
+
+          if (allSymbols.length > 0) {
+            clearVec(db, namespace)
+            const batchSize = 50
+            for (let i = 0; i < allSymbols.length; i += batchSize) {
+              const batch = allSymbols.slice(i, i + batchSize)
+              const texts = batch.map(s => prepSymText({
+                qualifiedName: s.qualified_name,
+                signature: s.signature,
+                javadoc: s.javadoc,
+                kind: s.kind,
+              }))
+              const embeddings = await embedder.embedBatch(texts)
+              const vectors = batch.map((s, idx) => ({
+                symbolId: s.id,
+                embedding: embeddings[idx],
+              }))
+              insertVectors(db, vectors)
+            }
+            console.error(`[condex] Vector index rebuilt after index_folder (${allSymbols.length} symbols)`)
+          }
+        } catch (err: any) {
+          console.error(`[condex] Failed to rebuild vector index after index_folder: ${err.message}`)
+        }
+      }
+
       return {
         content: [{
           type: 'text' as const,
