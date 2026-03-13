@@ -26,7 +26,7 @@ import { SafeFS } from '../security/fs-guard.js'
 import { generateNamespace } from '../namespace/namespace.js'
 import { loadVec, insertVectors, vectorSearch } from '../retrieval/vector-search.js'
 import { rrfFusion } from '../retrieval/rrf-fusion.js'
-import { getEmbedder, getCacheDir, prepareSymbolText, resetEmbedder } from '../embeddings/local-embed.js'
+import { getEmbedder, prepareSymbolText, resetEmbedder } from '../embeddings/local-embed.js'
 import type { Embedder } from '../embeddings/local-embed.js'
 
 // ── Colors for terminal ──
@@ -619,9 +619,9 @@ async function main() {
   // ── 1. Create temp project ──
   header('1. Creating test project')
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'condex-realtest-'))
-  // Use default model cache (~/.condex/models/) — same as condex-setup.sh
-  const modelCacheDir = getCacheDir()
-  const modelSubdir = path.join(modelCacheDir, 'nomic-ai', 'nomic-embed-text-v1.5')
+  const tmpModelDir = fs.mkdtempSync(path.join(os.tmpdir(), 'condex-model-'))
+  process.env.CONDEX_MODEL_CACHE_DIR = tmpModelDir
+  const modelSubdir = path.join(tmpModelDir, 'nomic-ai', 'nomic-embed-text-v1.5')
   const onnxDir = path.join(modelSubdir, 'onnx')
 
   let fileCount = 0
@@ -780,13 +780,13 @@ async function main() {
     ok('sqlite-vec extension loaded')
   } catch (err: any) {
     fail(`sqlite-vec failed: ${err.message}`)
-    cleanup(db, tmpDir)
+    cleanup(db, tmpDir, tmpModelDir)
     process.exit(1)
   }
 
   // ── 5. Download model + build vector index ──
   header('5. Downloading embedding model')
-  stat('Model cache', modelCacheDir)
+  stat('Model cache', tmpModelDir)
 
   // Download via curl (same method as condex-setup.sh) if not already cached
   ensureModelViaUrl(modelSubdir, onnxDir)
@@ -799,7 +799,7 @@ async function main() {
     ok(`Model ready (${embedder.dimensions} dimensions, ${dlMs}ms)`)
   } catch (err: any) {
     fail(`Model download failed: ${err.message}`)
-    cleanup(db, tmpDir)
+    cleanup(db, tmpDir, tmpModelDir)
     process.exit(1)
   }
 
@@ -967,13 +967,13 @@ function ensureModelViaUrl(modelSubdir: string, onnxDir: string): void {
   ok('Model downloaded successfully')
 }
 
-function cleanup(db: Database.Database, tmpDir: string) {
+function cleanup(db: Database.Database, tmpDir: string, tmpModelDir: string) {
   header('Cleanup')
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
   ok(`Removed temp project: ${tmpDir}`)
-  // Model cache at ~/.condex/models/ is kept (shared with condex-setup.sh)
-  info('Model cache preserved (shared with condex-setup.sh)')
+  fs.rmSync(tmpModelDir, { recursive: true, force: true })
+  ok(`Removed temp model cache: ${tmpModelDir}`)
   resetEmbedder()
 }
 
