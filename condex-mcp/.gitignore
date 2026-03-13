@@ -9,3 +9,4 @@ dist/
 *.tsbuildinfo
 .DS_Store
 opencode.sample.json
+packages/condex-core/.condex/
