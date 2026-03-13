@@ -58,7 +58,10 @@ function estimateTokens(text: string): number {
 
 // ── list_projects ─────────────────────────────────────────
 
-export function handleListProjects(ctx: HandlerContext): ToolResult {
+export async function handleListProjects(ctx: HandlerContext): Promise<ToolResult> {
+  if (ctx.reindexer) {
+    await ctx.reindexer.reindexIfNeeded()
+  }
   const startMs = Date.now()
   const rows = ctx.db.prepare('SELECT * FROM projects').all() as any[]
 
@@ -92,10 +95,13 @@ export function handleListProjects(ctx: HandlerContext): ToolResult {
 
 // ── get_project_outline ───────────────────────────────────
 
-export function handleGetProjectOutline(
+export async function handleGetProjectOutline(
   ctx: HandlerContext,
   args: { projectId?: string }
-): ToolResult {
+): Promise<ToolResult> {
+  if (ctx.reindexer) {
+    await ctx.reindexer.reindexIfNeeded()
+  }
   const startMs = Date.now()
   const pid = args.projectId ?? ctx.projectId
   const outline = getProjectOutline(ctx.db, pid)
@@ -122,10 +128,13 @@ export function handleGetProjectOutline(
 
 // ── get_file_outline ──────────────────────────────────────
 
-export function handleGetFileOutline(
+export async function handleGetFileOutline(
   ctx: HandlerContext,
   args: { filePath: string; projectId?: string }
-): ToolResult {
+): Promise<ToolResult> {
+  if (ctx.reindexer) {
+    await ctx.reindexer.reindexIfNeeded()
+  }
   const startMs = Date.now()
   const pid = args.projectId ?? ctx.projectId
   const symbols = getSymbolsByFile(ctx.db, pid, args.filePath)
@@ -400,10 +409,13 @@ export async function handleSearchSymbols(
 
 // ── get_symbol ────────────────────────────────────────────
 
-export function handleGetSymbol(
+export async function handleGetSymbol(
   ctx: HandlerContext,
   args: { symbolId: string }
-): ToolResult {
+): Promise<ToolResult> {
+  if (ctx.reindexer) {
+    await ctx.reindexer.reindexIfNeeded()
+  }
   const startMs = Date.now()
   const symbol = getSymbolById(ctx.db, args.symbolId)
 
@@ -470,10 +482,13 @@ export function handleGetSymbol(
 
 // ── get_symbols ───────────────────────────────────────────
 
-export function handleGetSymbols(
+export async function handleGetSymbols(
   ctx: HandlerContext,
   args: { symbolIds: string[] }
-): ToolResult {
+): Promise<ToolResult> {
+  if (ctx.reindexer) {
+    await ctx.reindexer.reindexIfNeeded()
+  }
   const startMs = Date.now()
   const symbols = getSymbolsByIds(ctx.db, args.symbolIds)
 

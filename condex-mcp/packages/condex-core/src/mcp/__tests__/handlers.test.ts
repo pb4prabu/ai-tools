@@ -109,41 +109,41 @@ describe('MCP handlers', () => {
   })
 
   describe('list_projects', () => {
-    it('returns project list', () => {
-      const result = handleListProjects(ctx)
+    it('returns project list', async () => {
+      const result = await handleListProjects(ctx)
       const data = JSON.parse(result.content[0].text)
       expect(data).toHaveLength(1)
       expect(data[0].projectId).toBe('test@abc')
       expect(data[0].name).toBe('test')
     })
 
-    it('includes _meta', () => {
-      const result = handleListProjects(ctx)
+    it('includes _meta', async () => {
+      const result = await handleListProjects(ctx)
       expect(result._meta).toBeDefined()
       expect((result._meta as any).projectId).toBe('test@abc')
     })
   })
 
   describe('get_project_outline', () => {
-    it('returns project outline', () => {
+    it('returns project outline', async () => {
       // Update symbol count
       db.prepare('UPDATE projects SET symbol_count = 3 WHERE id = ?').run('test@abc')
 
-      const result = handleGetProjectOutline(ctx, {})
+      const result = await handleGetProjectOutline(ctx, {})
       const data = JSON.parse(result.content[0].text)
       expect(data.totalSymbols).toBe(3)
       expect(data.packages).toHaveLength(2)
     })
 
-    it('returns error for missing project', () => {
-      const result = handleGetProjectOutline(ctx, { projectId: 'nope' })
+    it('returns error for missing project', async () => {
+      const result = await handleGetProjectOutline(ctx, { projectId: 'nope' })
       expect(result.content[0].text).toContain('No project found')
     })
   })
 
   describe('get_file_outline', () => {
-    it('returns symbols in a file', () => {
-      const result = handleGetFileOutline(ctx, {
+    it('returns symbols in a file', async () => {
+      const result = await handleGetFileOutline(ctx, {
         filePath: 'src/order/CreateOrderHandler.java',
       })
       const data = JSON.parse(result.content[0].text)
@@ -152,8 +152,8 @@ describe('MCP handlers', () => {
       expect(data[0].signature).toContain('CreateOrderHandler')
     })
 
-    it('returns message for empty file', () => {
-      const result = handleGetFileOutline(ctx, { filePath: 'nonexistent.java' })
+    it('returns message for empty file', async () => {
+      const result = await handleGetFileOutline(ctx, { filePath: 'nonexistent.java' })
       expect(result.content[0].text).toContain('No symbols found')
     })
   })
