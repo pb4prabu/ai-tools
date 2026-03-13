@@ -133,6 +133,15 @@ async function main() {
   let embedder: Embedder | null = null
 
   if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid' || SEARCH_MODE === 'smart') {
+    // Always create the symbol_vectors table so queries don't crash with "no such table"
+    try {
+      loadVec(db)
+      console.error(`[condex] sqlite-vec loaded, symbol_vectors table ready`)
+    } catch (err: any) {
+      console.error(`[condex] Failed to load sqlite-vec extension: ${err.message}`)
+      console.error(`[condex] Vector search will not be available. Install sqlite-vec or use CONDEX_SEARCH_MODE=bm25`)
+    }
+
     try {
       const { getEmbedder, prepareSymbolText, ensureModelDownloaded, getCacheDir } = await import('./embeddings/local-embed.js')
       const modelCacheDir = getCacheDir()
@@ -143,8 +152,7 @@ async function main() {
       embedder = await getEmbedder()
       console.error(`[condex] Embedder ready (${embedder.dimensions} dimensions)`)
 
-      // Load sqlite-vec and build vector index
-      loadVec(db)
+      // Build vector index for existing symbols
       const allSymbols = db.prepare(
         'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
       ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]

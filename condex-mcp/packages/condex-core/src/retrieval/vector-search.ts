@@ -64,6 +64,17 @@ export async function vectorSearch(
   embedder: Embedder,
   maxDistance: number = 0.95
 ): Promise<VectorResult[]> {
+  // Guard: ensure symbol_vectors table exists
+  const tableExists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='symbol_vectors'"
+  ).get()
+  if (!tableExists) {
+    throw new Error(
+      'Vector search unavailable: symbol_vectors table not found. ' +
+      'Ensure sqlite-vec is installed and CONDEX_SEARCH_MODE is set to vector, hybrid, or smart.'
+    )
+  }
+
   const queryVec = await embedder.embed(queryText)
   const queryBuf = Buffer.from(queryVec.buffer)
 
