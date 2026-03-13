@@ -22,7 +22,7 @@
       "CONDEX_VECTOR_MAX_DISTANCE": "0.95",
       "CONDEX_MODEL_CACHE_DIR": ""
     },
-    "_note_CONDEX_MODEL_CACHE_DIR": "Optional. Leave empty for default (~/.cache/condex/models on Linux, ~/Library/Caches/condex/models on macOS). Set to override model cache location."
+    "_note_CONDEX_MODEL_CACHE_DIR": "Optional. Leave empty for default (.condex/models/ inside project root). Set to override model cache location."
   },
 
   "condex-hybrid": {
@@ -91,7 +91,7 @@
   "_all_env_vars": {
     "_description": "Complete list of environment variables with defaults",
     "CONDEX_SEARCH_MODE": "bm25 | vector | hybrid | smart (default: bm25)",
-    "CONDEX_MODEL_CACHE_DIR": "Override embedding model cache directory (default: ~/.cache/condex/models on Linux, ~/Library/Caches/condex/models on macOS)",
+    "CONDEX_MODEL_CACHE_DIR": "Override embedding model cache directory (default: .condex/models/ inside project root)",
     "CONDEX_BM25_MIN_SCORE": "Minimum BM25 score threshold (default: 0.3)",
     "CONDEX_VECTOR_MAX_DISTANCE": "Maximum vector distance threshold (default: 0.95)",
     "CONDEX_SMART_BM25_MIN_SCORE": "Stricter BM25 threshold for smart mode (default: 0.5)",

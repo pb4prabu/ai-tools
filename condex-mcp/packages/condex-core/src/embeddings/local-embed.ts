@@ -82,16 +82,10 @@ export function getCacheDir(): string {
     return process.env.CONDEX_MODEL_CACHE_DIR
   }
 
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? '/tmp'
-
-  // Use platform-appropriate cache directory
-  if (process.platform === 'darwin') {
-    return `${home}/Library/Caches/condex/models`
-  }
-
-  // Linux: follow XDG_CACHE_HOME convention
-  const xdgCache = process.env.XDG_CACHE_HOME ?? `${home}/.cache`
-  return `${xdgCache}/condex/models`
+  // Default: .condex/models/ inside the current working directory (project root).
+  // This avoids writing anything under ~/ which may be restricted in corporate environments.
+  const path = require('node:path')
+  return path.join(process.cwd(), '.condex', 'models')
 }
 
 /**

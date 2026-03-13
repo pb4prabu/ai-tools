@@ -153,7 +153,7 @@ CONDEX_SEARCH_MODE=vector
 - **Model**: `nomic-ai/nomic-embed-text-v1.5` (768 dimensions, ONNX, q8 quantized)
 - **Storage**: `sqlite-vec` virtual table
 - **Latency**: 1-3s per query (embedding computation)
-- **First run**: Downloads ~100MB model to `~/.condex/models/`
+- **First run**: Downloads ~100MB model to `.condex/models/` (inside project root)
 - **Startup**: Embeds all symbols into vector index (adds 30-60s)
 - **Token savings**: ~47.3% (returns more context)
 
@@ -318,7 +318,7 @@ Any network call throws: `NETWORK_BLOCKED: Condex MCP server does not allow outb
 | Vector | **Disabled** — model download may be needed on first run |
 | Hybrid | **Disabled** — same as vector |
 
-After the embedding model is cached locally (`~/.condex/models/`), vector/hybrid modes operate fully offline.
+After the embedding model is cached locally (`.condex/models/`), vector/hybrid modes operate fully offline.
 
 ### Filesystem Guard (SafeFS)
 
@@ -432,7 +432,7 @@ Cumulative savings persisted in `.condex/savings.json`.
 | Variable | Values | Default | Purpose |
 |----------|--------|---------|---------|
 | `CONDEX_SEARCH_MODE` | `bm25` / `vector` / `hybrid` / `smart` | `bm25` | Search algorithm |
-| `CONDEX_MODEL_CACHE_DIR` | Absolute path | `~/.cache/condex/models` (Linux) / `~/Library/Caches/condex/models` (macOS) | Override embedding model cache location |
+| `CONDEX_MODEL_CACHE_DIR` | Absolute path | `.condex/models/` (inside project root) | Override embedding model cache location |
 | `CONDEX_BM25_MIN_SCORE` | Float | `0.3` | Minimum BM25 score threshold |
 | `CONDEX_VECTOR_MAX_DISTANCE` | Float | `0.95` | Maximum vector distance threshold |
 | `CONDEX_SMART_BM25_MIN_SCORE` | Float | `0.5` | Stricter BM25 threshold for smart mode |
@@ -556,9 +556,7 @@ npm run build
 
 The build step automatically downloads the embedding model (~100MB, `nomic-ai/nomic-embed-text-v1.5`) to the default cache directory. This ensures the model is ready before the MCP server starts.
 
-**Default model cache locations:**
-- **Linux**: `$XDG_CACHE_HOME/condex/models` (or `~/.cache/condex/models`)
-- **macOS**: `~/Library/Caches/condex/models`
+**Default model cache location:** `.condex/models/` inside the project root (same directory as the index). No files are written under `~/`.
 
 To use a custom model cache directory:
 
