@@ -14,6 +14,13 @@ function getParser(): Parser {
   if (!parser) {
     parser = new Parser()
     parser.setLanguage(Java as any)
+
+    // Self-test: verify tree-sitter can parse a simple Java class
+    const testTree = parser.parse('public class Test { public void foo() {} }')
+    const testTypes = testTree.rootNode.namedChildren.map(c => c.type)
+    if (!testTypes.includes('class_declaration')) {
+      console.error(`[condex-java] CRITICAL: tree-sitter self-test failed! Root types: ${testTypes.join(', ')}`)
+    }
   }
   return parser
 }
@@ -54,13 +61,31 @@ export function parseJavaFileWithRefs(content: string, opts: ParseOptions): Pars
   const symbols: Symbol[] = []
   const packageName = extractPackageName(tree.rootNode)
 
+  // Check for parse errors
+  const rootChildren = tree.rootNode.namedChildren
+  const hasErrors = rootChildren.some(c => c.type === 'ERROR' || c.hasError)
+  if (hasErrors) {
+    console.error(`[condex-java] Parse errors in ${opts.filePath} (tree-sitter returned error nodes)`)
+  }
+
   // Walk top-level declarations
-  for (const node of tree.rootNode.namedChildren) {
+  for (const node of rootChildren) {
     try {
       extractSymbols(node, content, opts, packageName, null, symbols)
     } catch (err: any) {
       console.error(`[condex-java] Error extracting from ${opts.filePath}: ${err.message}`)
     }
+  }
+
+  // Log diagnostic when a .java file yields 0 symbols
+  if (symbols.length === 0 && opts.filePath.endsWith('.java')) {
+    const childTypes = rootChildren.map(c => c.type).join(', ')
+    console.error(
+      `[condex-java] WARNING: 0 symbols from ${opts.filePath} ` +
+      `(${rootChildren.length} root children: ${childTypes})`
+    )
+    // Log first 200 chars of content for debugging
+    console.error(`[condex-java]   Content preview: ${content.slice(0, 200).replace(/\n/g, '\\n')}`)
   }
 
   // Extract call graph references

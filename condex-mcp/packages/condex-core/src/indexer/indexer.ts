@@ -40,6 +40,18 @@ export interface IndexResult {
   filesSkipped: number
   loadTimeMs: number
   incremental: boolean
+  /** Diagnostic info: language detected */
+  language?: string
+  /** Diagnostic: source files found by glob */
+  sourceFilesFound?: number
+  /** Diagnostic: supplemental (non-language) files found */
+  supplementalFilesFound?: number
+  /** Diagnostic: files that produced 0 symbols from language parser */
+  zeroSymbolFiles?: string[]
+  /** Diagnostic: symbol count by kind */
+  symbolsByKind?: Record<string, number>
+  /** Diagnostic: parse errors count */
+  parseErrors?: number
 }
 
 export type ParseFileFn = (content: string, opts: {
@@ -138,6 +150,7 @@ export async function indexProject(
     const newHashes: Record<string, string> = {}
     let filesProcessed = 0
     let filesSkipped = 0
+    const zeroSymbolFiles: string[] = []
 
     let parseErrors = 0
     for (const relPath of sourceFiles) {
@@ -171,6 +184,10 @@ export async function indexProject(
           allSymbols.push(...result.symbols)
           allRefs.push(...result.refs)
           filesProcessed++
+          if (result.symbols.length === 0 && relPath.endsWith('.java')) {
+            zeroSymbolFiles.push(relPath)
+            console.error(`[condex] WARNING: 0 symbols from language parser for ${relPath} (${content.length} bytes)`)
+          }
         } catch (err: any) {
           console.error(`[condex] Error parsing ${relPath}: ${err.message}`)
           parseErrors++
@@ -303,6 +320,12 @@ export async function indexProject(
       `(${filesSkipped} skipped) in ${loadTimeMs}ms`
     )
 
+    // Build symbol-by-kind breakdown
+    const symbolsByKind: Record<string, number> = {}
+    for (const sym of allSymbols) {
+      symbolsByKind[sym.kind] = (symbolsByKind[sym.kind] ?? 0) + 1
+    }
+
     return {
       projectId,
       projectName,
@@ -312,6 +335,12 @@ export async function indexProject(
       filesSkipped,
       loadTimeMs,
       incremental: !opts.full && Object.keys(existingHashes).length > 0,
+      language: language ?? undefined,
+      sourceFilesFound: sourceFiles.length,
+      supplementalFilesFound: supplementalFiles.length,
+      zeroSymbolFiles: zeroSymbolFiles.length > 0 ? zeroSymbolFiles.slice(0, 20) : undefined,
+      symbolsByKind,
+      parseErrors: parseErrors > 0 ? parseErrors : undefined,
     }
   } finally {
     await releaseIndexLock(safeFs)

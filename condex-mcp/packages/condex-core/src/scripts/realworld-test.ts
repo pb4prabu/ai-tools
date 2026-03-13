@@ -920,7 +920,7 @@ async function main() {
   stat('Total time', `${(totalMs / 1000).toFixed(1)}s`)
 
   // ── Cleanup ──
-  cleanup(db, tmpDir)
+  cleanup(db, tmpDir, tmpModelDir)
 
   if (totalFail > 0) process.exit(1)
   process.exit(0)
