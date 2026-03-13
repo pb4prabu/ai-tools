@@ -77,8 +77,35 @@ export async function getEmbedder(): Promise<Embedder> {
 }
 
 function getCacheDir(): string {
+  // Allow explicit override via env var
+  if (process.env.CONDEX_MODEL_CACHE_DIR) {
+    return process.env.CONDEX_MODEL_CACHE_DIR
+  }
+
   const home = process.env.HOME ?? process.env.USERPROFILE ?? '/tmp'
-  return `${home}/.condex/models`
+
+  // Use platform-appropriate cache directory
+  if (process.platform === 'darwin') {
+    return `${home}/Library/Caches/condex/models`
+  }
+
+  // Linux: follow XDG_CACHE_HOME convention
+  const xdgCache = process.env.XDG_CACHE_HOME ?? `${home}/.cache`
+  return `${xdgCache}/condex/models`
+}
+
+/**
+ * Ensure the model is downloaded to the cache directory.
+ * Call this at startup to pre-download before the embedder is needed.
+ * Returns the cache directory path used.
+ */
+export async function ensureModelDownloaded(): Promise<string> {
+  const cacheDir = getCacheDir()
+  const { env } = await import('@huggingface/transformers')
+  env.cacheDir = cacheDir
+  // Calling getEmbedder triggers the download if not cached
+  await getEmbedder()
+  return cacheDir
 }
 
 /** Reset embedder (for testing) */
