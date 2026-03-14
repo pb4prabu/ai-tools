@@ -188,6 +188,12 @@ You: @agent please run through BENCHMARK_TEST_PLAN.md
 
 The agent will execute a series of Condex queries against your project and produce a stats summary at the end.
 
+See [`BENCHMARK_SAMPLE_REPORT.md`](./BENCHMARK_SAMPLE_REPORT.md) for an example of what the benchmark output looks like — run against a Spring Boot hexagonal project (29 modules, ~120 Java files, 487 symbols):
+
+```
+📊 Condex Stats: 12 queries (bm25:5, vector:3, direct:4) | hits: 12/12 (100%) | used: ~5,046 tok | w/o Condex: ~31,750 tok | saved: ~26,704 (84%)
+```
+
 ---
 
 ## How It Works
