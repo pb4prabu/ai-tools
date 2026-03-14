@@ -135,51 +135,6 @@ async function handleInvalidate() {
   console.log('Next run will trigger a full re-index.')
 }
 
-/**
- * Read a JSON file, ensure the nested path exists, and upsert a key.
- * Removes any stale `${prefix}-*` keys (e.g. condex-bm25, condex-smart).
- * Creates the file if it doesn't exist. Never overwrites unrelated keys.
- */
-function upsertJsonKey(
-  filePath: string,
-  parentPath: string[],
-  key: string,
-  value: unknown,
-  cleanupPrefix?: string,
-): void {
-  let root: Record<string, any> = {}
-  if (fs.existsSync(filePath)) {
-    try {
-      root = JSON.parse(fs.readFileSync(filePath, 'utf8'))
-    } catch {
-      // File exists but isn't valid JSON — start fresh
-      root = {}
-    }
-  }
-
-  // Walk/create the parent path (e.g. ["mcpServers"] or ["mcp"])
-  let current: Record<string, any> = root
-  for (const segment of parentPath) {
-    if (!current[segment] || typeof current[segment] !== 'object') {
-      current[segment] = {}
-    }
-    current = current[segment]
-  }
-
-  // Remove stale prefixed keys (condex-bm25, condex-vector, etc.)
-  if (cleanupPrefix) {
-    for (const k of Object.keys(current)) {
-      if (k.startsWith(cleanupPrefix + '-')) {
-        delete current[k]
-      }
-    }
-  }
-
-  // Set the key
-  current[key] = value
-  fs.writeFileSync(filePath, JSON.stringify(root, null, 2) + '\n')
-}
-
 async function handleSetup() {
   const targetPath = args[1] ? path.resolve(args[1]) : process.cwd()
 
@@ -199,34 +154,64 @@ async function handleSetup() {
     }
   }
 
-  // --- .mcp.json (Claude Code) ---
-  const condexMcpEntry = {
-    command: 'node',
-    args: [serverPath],
-    env: {
-      CONDEX_SEARCH_MODE: 'vector,bm25',
-      CONDEX_BM25_MIN_SCORE: '0.3',
-      CONDEX_VECTOR_MAX_DISTANCE: '0.95',
+  const mcpJson = {
+    mcpServers: {
+      condex: {
+        command: 'node',
+        args: [serverPath],
+        env: {
+          CONDEX_SEARCH_MODE: 'vector,bm25',
+          CONDEX_BM25_MIN_SCORE: '0.3',
+          CONDEX_VECTOR_MAX_DISTANCE: '0.95',
+        },
+      },
     },
   }
+
+  const opencodeJson = {
+    mcp: {
+      condex: {
+        type: 'local',
+        command: ['node', serverPath],
+        environment: {
+          CONDEX_SEARCH_MODE: 'vector,bm25',
+          CONDEX_BM25_MIN_SCORE: '0.3',
+          CONDEX_VECTOR_MAX_DISTANCE: '0.95',
+        },
+        enabled: true,
+      },
+    },
+  }
+
+  // --- .mcp.json (Claude Code) ---
   const dotMcpPath = path.join(targetPath, '.mcp.json')
-  upsertJsonKey(dotMcpPath, ['mcpServers'], 'condex', condexMcpEntry, 'condex')
-  console.log(`${fs.existsSync(dotMcpPath) ? 'Updated' : 'Created'}: ${dotMcpPath}`)
+  if (fs.existsSync(dotMcpPath)) {
+    console.warn(`⚠  ${dotMcpPath} already exists — copy the condex entry manually from the generated .mcp.json below`)
+  } else {
+    fs.writeFileSync(dotMcpPath, JSON.stringify(mcpJson, null, 2) + '\n')
+    console.log(`✓ Created: ${dotMcpPath}`)
+  }
 
   // --- opencode.json (OpenCode / Dayton) ---
-  const condexOcEntry = {
-    type: 'local',
-    command: ['node', serverPath],
-    environment: {
-      CONDEX_SEARCH_MODE: 'vector,bm25',
-      CONDEX_BM25_MIN_SCORE: '0.3',
-      CONDEX_VECTOR_MAX_DISTANCE: '0.95',
-    },
-    enabled: true,
-  }
   const opencodePath = path.join(targetPath, 'opencode.json')
-  upsertJsonKey(opencodePath, ['mcp'], 'condex', condexOcEntry, 'condex')
-  console.log(`${fs.existsSync(opencodePath) ? 'Updated' : 'Created'}: ${opencodePath}`)
+  if (fs.existsSync(opencodePath)) {
+    console.warn(`⚠  ${opencodePath} already exists — copy the condex entry manually from the generated opencode.json below`)
+  } else {
+    fs.writeFileSync(opencodePath, JSON.stringify(opencodeJson, null, 2) + '\n')
+    console.log(`✓ Created: ${opencodePath}`)
+  }
+
+  // If either file existed, print the configs for manual copy-paste
+  if (fs.existsSync(dotMcpPath) && fs.existsSync(opencodePath)) {
+    const dotMcpExisted = !fs.readFileSync(dotMcpPath, 'utf8').includes(serverPath)
+    const ocExisted = !fs.readFileSync(opencodePath, 'utf8').includes(serverPath)
+    if (dotMcpExisted || ocExisted) {
+      console.log(`\nAdd this to your .mcp.json under "mcpServers":`)
+      console.log(JSON.stringify(mcpJson.mcpServers.condex, null, 2))
+      console.log(`\nAdd this to your opencode.json under "mcp":`)
+      console.log(JSON.stringify(opencodeJson.mcp.condex, null, 2))
+    }
+  }
 
   // Check vector readiness
   console.log(`\nServer: ${serverPath}`)
