@@ -15,6 +15,7 @@ With Condex:     Agent queries 4 symbols  →  6,588 tokens (91.8% saved)
 
 - [Setup](#setup)
 - [Agent Instructions](#agent-instructions)
+- [Benchmark Your Project](#benchmark-your-project)
 - [How It Works](#how-it-works)
 - [Search Chain](#search-chain)
 - [MCP Tools](#mcp-tools)
@@ -217,6 +218,18 @@ Track `_meta.tokensInResponse`, `_meta.tokensIfNaive`, `_meta.symbolsReturned`, 
 | `used` | Sum of `_meta.tokensInResponse` | Actual tokens consumed via Condex |
 | `w/o Condex` | Sum of `_meta.tokensIfNaive` | Tokens if agent had read full files instead |
 | `saved` | `tokensIfNaive - tokensInResponse` | Token savings from using Condex |
+
+---
+
+## Benchmark Your Project
+
+Want to measure how much Condex saves on **your** codebase? Give [`BENCHMARK_TEST_PLAN.md`](./BENCHMARK_TEST_PLAN.md) to your AI agent — it contains a step-by-step test plan the agent can follow to benchmark Condex MCP efficiency and report token savings.
+
+```
+You: @agent please run through BENCHMARK_TEST_PLAN.md
+```
+
+The agent will execute a series of Condex queries against your project and produce a stats summary at the end.
 
 ---
 
