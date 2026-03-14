@@ -446,7 +446,6 @@ Cumulative savings persisted in `.condex/savings.json`.
 | `vector` | Vector only, no fallback |
 | `bm25` | BM25 only (fastest, no model needed) |
 | `hybrid` | RRF fusion of BM25 + vector (always runs both) |
-| `hybrid,bm25` | Hybrid first, BM25 fallback if both empty |
 
 ### Project Config (optional)
 

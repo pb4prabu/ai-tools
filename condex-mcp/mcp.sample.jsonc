@@ -38,7 +38,6 @@
         //   "bm25"         → BM25 only (no model download needed)
         //   "vector"       → Vector only, no fallback
         //   "hybrid"       → Always fuse both modes
-        //   "hybrid,bm25"  → Hybrid first, BM25 fallback if both empty
         //
         // If vector/hybrid is in the chain but sqlite-vec or the embedding
         // model is unavailable, Condex automatically removes it from the
