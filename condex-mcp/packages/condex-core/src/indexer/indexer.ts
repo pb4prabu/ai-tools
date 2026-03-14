@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { glob } from 'glob'
+import { minimatch } from 'minimatch'
 import type Database from 'better-sqlite3'
 import type { SafeFS } from '../security/fs-guard.js'
 import type { Symbol } from '../types/symbol.js'
@@ -20,6 +21,8 @@ import {
   releaseIndexLock,
   hashContent,
   writeErrorLog,
+  writeSkippedLog,
+  type SkippedFile,
 } from '../store/fs-store.js'
 import {
   insertProject,
@@ -152,6 +155,7 @@ export async function indexProject(
     let filesProcessed = 0
     let filesSkipped = 0
     const zeroSymbolFiles: string[] = []
+    const skippedFiles: SkippedFile[] = []
 
     let parseErrors = 0
     for (const relPath of sourceFiles) {
@@ -159,8 +163,9 @@ export async function indexProject(
       let content: string
       try {
         content = fs.readFileSync(absPath, 'utf-8')
-      } catch {
+      } catch (err: any) {
         filesSkipped++
+        skippedFiles.push({ file: relPath, reason: 'unreadable', detail: err.message })
         continue
       }
 
@@ -170,6 +175,7 @@ export async function indexProject(
       // Incremental: skip unchanged files
       if (!opts.full && existingHashes[relPath] === hash) {
         filesSkipped++
+        skippedFiles.push({ file: relPath, reason: 'unchanged' })
         continue
       }
 
@@ -193,6 +199,7 @@ export async function indexProject(
           console.error(`[condex] Error parsing ${relPath}: ${err.message}`)
           parseErrors++
           filesSkipped++
+          skippedFiles.push({ file: relPath, reason: 'parse_error', detail: err.message })
         }
       } else if (opts.parseFile) {
         try {
@@ -203,9 +210,11 @@ export async function indexProject(
           console.error(`[condex] Error parsing ${relPath}: ${err.message}`)
           parseErrors++
           filesSkipped++
+          skippedFiles.push({ file: relPath, reason: 'parse_error', detail: err.message })
         }
       } else {
         filesSkipped++
+        skippedFiles.push({ file: relPath, reason: 'no_parser' })
       }
     }
     if (parseErrors > 0) {
@@ -320,6 +329,15 @@ export async function indexProject(
       `[condex] Indexed: ${filesProcessed} files, ${allSymbols.length} symbols ` +
       `(${filesSkipped} skipped) in ${loadTimeMs}ms`
     )
+
+    // Detect files excluded by glob patterns and write skipped log
+    const indexedFileSet = new Set([...sourceFiles, ...supplementalFiles])
+    const excludedFiles = await findExcludedFiles(projectRoot, language ?? 'java', config, indexedFileSet)
+    const allSkipped = [...skippedFiles, ...excludedFiles]
+    if (allSkipped.length > 0) {
+      await writeSkippedLog(safeFs, allSkipped)
+      console.error(`[condex] Skipped log: ${allSkipped.length} files (see .condex/index/skipped.json)`)
+    }
 
     // Build symbol-by-kind breakdown
     const symbolsByKind: Record<string, number> = {}
@@ -464,4 +482,71 @@ async function findSupplementalFiles(
     .filter(f => !alreadyFound.has(f))
     .filter(f => !isBinaryExtension(f))
     .sort()
+}
+
+/**
+ * Find files that exist on disk but were excluded by glob patterns.
+ * Compares a full unfiltered scan against the filtered source + supplemental sets.
+ */
+async function findExcludedFiles(
+  projectRoot: string,
+  language: string,
+  config: Partial<CondexConfig>,
+  indexedFiles: Set<string>
+): Promise<SkippedFile[]> {
+  const skipped: SkippedFile[] = []
+
+  // Get ALL files with minimal exclusions (just .condex and .git internals)
+  const allFiles = await glob('**/*', {
+    cwd: projectRoot,
+    ignore: ['**/.condex/**', '**/.git/**'],
+    nodir: true,
+  })
+
+  const exclude = config.exclude ?? DEFAULT_CONFIG.exclude
+  const allExclude = [...new Set([...exclude, '**/.condex/**'])]
+
+  for (const file of allFiles) {
+    if (indexedFiles.has(file)) continue
+
+    // Determine why this file was skipped
+    if (isBinaryExtension(file)) {
+      skipped.push({ file, reason: 'binary_extension', detail: path.extname(file) })
+      continue
+    }
+
+    // Check which exclusion pattern matched
+    const matchedPattern = findMatchingPattern(file, allExclude)
+    if (matchedPattern) {
+      skipped.push({ file, reason: 'excluded_by_pattern', pattern: matchedPattern })
+      continue
+    }
+
+    // If not binary and not pattern-excluded, it might be a language file
+    // that didn't match include patterns — only relevant for source files
+    const extensionMap: Record<string, string[]> = {
+      java: ['.java'],
+      typescript: ['.ts', '.tsx'],
+      python: ['.py'],
+    }
+    const langExts = extensionMap[language] ?? extensionMap.java
+    const ext = path.extname(file)
+    if (langExts.length > 0 && !langExts.includes(ext)) {
+      // Non-language file that passed through supplemental — no action needed
+      continue
+    }
+  }
+
+  return skipped
+}
+
+/**
+ * Check if a file path matches any of the given glob exclusion patterns.
+ * Returns the first matching pattern, or null.
+ */
+function findMatchingPattern(filePath: string, patterns: string[]): string | null {
+  for (const pattern of patterns) {
+    if (minimatch(filePath, pattern, { dot: true })) return pattern
+  }
+  return null
 }

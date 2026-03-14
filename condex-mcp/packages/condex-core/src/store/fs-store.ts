@@ -183,6 +183,47 @@ export async function writeErrorLog(safeFs: SafeFS, error: {
   await safeFs.writeFile(logPath, existing + separator + JSON.stringify(entry, null, 2))
 }
 
+// ── Skipped Files Log ────────────────────────────────────────
+
+export interface SkippedFile {
+  file: string
+  reason: 'excluded_by_pattern' | 'binary_extension' | 'unreadable' | 'unchanged' | 'parse_error' | 'no_parser'
+  pattern?: string  // which exclusion pattern matched
+  detail?: string   // extra info (e.g., error message)
+}
+
+export async function writeSkippedLog(safeFs: SafeFS, skipped: SkippedFile[]): Promise<void> {
+  if (skipped.length === 0) return
+
+  const logDir = path.join(safeFs.getCondexDir(), 'index')
+  try {
+    await safeFs.mkdir(logDir)
+  } catch { /* already exists */ }
+
+  const logPath = path.join(logDir, 'skipped.json')
+
+  // Group by reason for readability
+  const grouped: Record<string, SkippedFile[]> = {}
+  for (const s of skipped) {
+    const key = s.reason
+    if (!grouped[key]) grouped[key] = []
+    grouped[key].push(s)
+  }
+
+  const report = {
+    timestamp: new Date().toISOString(),
+    totalSkipped: skipped.length,
+    byReason: Object.fromEntries(
+      Object.entries(grouped).map(([reason, files]) => [
+        reason,
+        { count: files.length, files: files.map(f => ({ file: f.file, ...(f.pattern ? { pattern: f.pattern } : {}), ...(f.detail ? { detail: f.detail } : {}) })) },
+      ])
+    ),
+  }
+
+  await safeFs.writeFile(logPath, JSON.stringify(report, null, 2))
+}
+
 // ── Condex Config ───────────────────────────────────────────
 
 export async function readCondexConfig(safeFs: SafeFS): Promise<CondexConfig | null> {
