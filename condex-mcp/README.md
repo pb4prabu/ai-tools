@@ -33,12 +33,12 @@ With Condex:     Agent queries 4 symbols  →  6,588 tokens (91.8% saved)
 
 ```bash
 git clone <repo> && cd condex-mcp
-bash condex-setup.sh
+npm run setup
 ```
 
 This installs dependencies, builds all packages, and downloads the embedding model (~145MB) to `~/.condex/models/`.
 
-Behind a proxy: `HTTPS_PROXY=http://proxy:port bash condex-setup.sh`
+Behind a proxy: `HTTPS_PROXY=http://proxy:port npm run setup`
 
 ### Add to Your Project
 
@@ -53,7 +53,7 @@ npx condex setup /path/to/your/project
 `condex-setup.sh` prints ready-to-use MCP configs at the end of setup (with the correct server path filled in). Copy the relevant snippet into your project:
 
 - **Claude Code** → paste into `.mcp.json` in your project root
-- **OpenCode** → paste into `opencode.json` in your project root
+- **OpenCode / Dayton** → paste into `opencode.json` in your project root
 
 **Option C** — manually create the config:
 
@@ -75,7 +75,7 @@ npx condex setup /path/to/your/project
 }
 ```
 
-**OpenCode** — create `opencode.json` in your project root:
+**OpenCode / Dayton** — create `opencode.json` in your project root:
 
 ```json
 {
@@ -322,7 +322,7 @@ Language auto-detection: `pom.xml`/`build.gradle` → Java, `tsconfig.json` → 
 ## Architecture
 
 ```
-AI Agent (Claude Code, OpenCode, etc.)
+AI Agent (Claude Code, OpenCode / Dayton, etc.)
     │
     ▼  MCP (stdio JSON-RPC)
 ┌──────────────────────────────────────────┐

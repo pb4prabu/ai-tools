@@ -8,6 +8,7 @@
     "packages/condex-cli"
   ],
   "scripts": {
+    "setup": "bash condex-setup.sh",
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/condex-core"
