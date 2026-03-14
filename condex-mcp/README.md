@@ -117,6 +117,22 @@ npx condex status [path]          # Show index status
 npx condex invalidate [path]      # Delete index (triggers re-index on next use)
 ```
 
+### Verify MCP Connection
+
+After setup, verify Condex is connected to your agent:
+
+| Agent | How to verify |
+|-------|---------------|
+| **Claude Code** | Run `/mcp` — look for `condex` in the server list with status `connected` |
+| **OpenCode / Dayton** | Run `/mcp` — look for `condex` with a green status indicator |
+| **Cursor** | Open Settings → MCP → check that `condex` shows as connected |
+| **Any MCP agent** | Call `list_projects` — if it returns your project, Condex is working |
+
+If `condex` doesn't appear or shows as disconnected, check:
+1. The server path in your config is correct (absolute path to `packages/condex-core/dist/server.js`)
+2. You ran `npm run build` in the condex-mcp directory
+3. Node.js >= 18 is installed
+
 ---
 
 ## Agent Instructions
