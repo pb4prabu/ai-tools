@@ -32,7 +32,7 @@ import { SavingsTracker } from './token/savings.js'
 import type { HandlerContext, SearchMode } from './mcp/handlers.js'
 import type { Embedder } from './embeddings/local-embed.js'
 import { loadVec, insertVectors } from './retrieval/vector-search.js'
-import { writeErrorLog, initCondexDir } from './store/fs-store.js'
+import { writeErrorLog, writeIndexStatus, initCondexDir, type IndexStatus } from './store/fs-store.js'
 
 const PROJECT_ROOT = path.resolve(process.cwd())
 const TOOL_VERSION = '1.0.0'
@@ -94,6 +94,14 @@ async function main() {
 
   // Auto-index on startup
   let architecture: string | null = null
+  const indexStatus: IndexStatus = {
+    searchMode: SEARCH_MODE,
+    bm25: { status: 'not_started' },
+    vector: { status: 'not_started' },
+    lastUpdated: new Date().toISOString(),
+  }
+
+  let bm25SymbolCount = 0
   try {
     const metaPath = path.join(PROJECT_ROOT, '.condex', 'index', 'meta.json')
     if (safeFs.existsSync(metaPath)) {
@@ -101,12 +109,14 @@ async function main() {
       const loadResult = await loadProject(db, safeFs)
       if (loadResult) {
         architecture = loadResult.architecture
+        bm25SymbolCount = loadResult.symbolCount
         console.error(
           `[condex] Loaded: ${loadResult.symbolCount} symbols, ` +
           `${loadResult.schemaCount} schema, ${loadResult.configCount} config ` +
           `in ${loadResult.loadTimeMs}ms`
         )
       }
+      indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
     } else if (javaParsers) {
       // No index: run full index
       console.error(`[condex] No existing index. Running full index...`)
@@ -118,19 +128,23 @@ async function main() {
         parseYaml: javaParsers.parseYaml,
       })
       architecture = result.architecture
+      bm25SymbolCount = result.symbolCount
       console.error(
         `[condex] Indexed: ${result.symbolCount} symbols from ${result.filesProcessed} files ` +
         `in ${result.loadTimeMs}ms`
       )
+      indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
     } else {
       console.error(`[condex] No parser available and no existing index.`)
+      indexStatus.bm25 = { status: 'skipped', error: 'No parser available', timestamp: new Date().toISOString() }
     }
   } catch (err: any) {
     console.error(`[condex] Error during startup indexing: ${err.message}`)
+    indexStatus.bm25 = { status: 'failed', error: err.message, timestamp: new Date().toISOString() }
     try {
       await initCondexDir(safeFs)
       await writeErrorLog(safeFs, {
-        phase: 'startup',
+        phase: 'startup:bm25',
         message: err.message,
         stack: err.stack,
         context: { projectRoot: PROJECT_ROOT, searchMode: SEARCH_MODE },
@@ -152,6 +166,9 @@ async function main() {
       console.error(`[condex] FATAL: sqlite-vec failed to load: ${err.message}`)
       console.error(err.stack)
       console.error(`[condex] Fix: run "npm install" to get sqlite-vec native binary for your platform, or use CONDEX_SEARCH_MODE=bm25`)
+      indexStatus.vector = { status: 'failed', error: `sqlite-vec load failed: ${err.message}`, timestamp: new Date().toISOString() }
+      indexStatus.lastUpdated = new Date().toISOString()
+      try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
       process.exit(1)
     }
 
@@ -168,39 +185,65 @@ async function main() {
       console.error(`[condex] FATAL: Embedding model failed to load: ${err.message}`)
       console.error(err.stack)
       console.error(`[condex] Fix: run "npm run download-model --workspace=packages/condex-core" or use CONDEX_SEARCH_MODE=bm25`)
+      indexStatus.vector = { status: 'failed', error: `Embedding model failed: ${err.message}`, timestamp: new Date().toISOString() }
+      indexStatus.lastUpdated = new Date().toISOString()
+      try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
       process.exit(1)
     }
 
     // Step 3: Build vector index for existing symbols
     console.error(`[condex] [3/3] Building vector index...`)
-    const { prepareSymbolText } = await import('./embeddings/local-embed.js')
-    const allSymbols = db.prepare(
-      'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
-    ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]
+    try {
+      const { prepareSymbolText } = await import('./embeddings/local-embed.js')
+      const allSymbols = db.prepare(
+        'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
+      ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]
 
-    if (allSymbols.length > 0) {
-      console.error(`[condex] Embedding ${allSymbols.length} symbols...`)
-      const batchSize = 50
-      for (let i = 0; i < allSymbols.length; i += batchSize) {
-        const batch = allSymbols.slice(i, i + batchSize)
-        const texts = batch.map(s => prepareSymbolText({
-          qualifiedName: s.qualified_name,
-          signature: s.signature,
-          javadoc: s.javadoc,
-          kind: s.kind,
-        }))
-        const embeddings = await embedder.embedBatch(texts)
-        const vectors = batch.map((s, idx) => ({
-          symbolId: s.id,
-          embedding: embeddings[idx],
-        }))
-        insertVectors(db, vectors)
+      if (allSymbols.length > 0) {
+        console.error(`[condex] Embedding ${allSymbols.length} symbols...`)
+        const batchSize = 50
+        let embedded = 0
+        for (let i = 0; i < allSymbols.length; i += batchSize) {
+          const batch = allSymbols.slice(i, i + batchSize)
+          const texts = batch.map(s => prepareSymbolText({
+            qualifiedName: s.qualified_name,
+            signature: s.signature,
+            javadoc: s.javadoc,
+            kind: s.kind,
+          }))
+          const embeddings = await embedder.embedBatch(texts)
+          const vectors = batch.map((s, idx) => ({
+            symbolId: s.id,
+            embedding: embeddings[idx],
+          }))
+          insertVectors(db, vectors)
+          embedded += batch.length
+        }
+        console.error(`[condex] [3/3] Vector index built for ${allSymbols.length} symbols`)
+        indexStatus.vector = { status: 'success', symbolCount: allSymbols.length, timestamp: new Date().toISOString() }
+      } else {
+        console.error(`[condex] [3/3] WARNING: 0 symbols to embed — vector index is empty`)
+        indexStatus.vector = { status: 'success', symbolCount: 0, error: 'No symbols to embed (BM25 index may be empty)', timestamp: new Date().toISOString() }
       }
-      console.error(`[condex] [3/3] Vector index built for ${allSymbols.length} symbols`)
-    } else {
-      console.error(`[condex] [3/3] WARNING: 0 symbols to embed — vector index is empty`)
+    } catch (err: any) {
+      console.error(`[condex] Error building vector index: ${err.message}`)
+      indexStatus.vector = { status: 'failed', error: `Embedding failed: ${err.message}`, timestamp: new Date().toISOString() }
+      try {
+        await writeErrorLog(safeFs, {
+          phase: 'startup:vector',
+          message: err.message,
+          stack: err.stack,
+          context: { projectRoot: PROJECT_ROOT, searchMode: SEARCH_MODE, bm25SymbolCount },
+        })
+      } catch { /* best effort */ }
     }
+  } else {
+    indexStatus.vector = { status: 'skipped', error: `Search mode is ${SEARCH_MODE} — vector not needed`, timestamp: new Date().toISOString() }
   }
+
+  // Write final index status
+  indexStatus.lastUpdated = new Date().toISOString()
+  try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
 
   // Initialize savings tracker
   const savings = new SavingsTracker(safeFs)

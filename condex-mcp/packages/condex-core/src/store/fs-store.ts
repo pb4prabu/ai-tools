@@ -154,6 +154,43 @@ export async function readMeta(safeFs: SafeFS): Promise<ProjectMeta | null> {
   }
 }
 
+// ── Index Status ─────────────────────────────────────────────
+
+export interface IndexPipelineStatus {
+  status: 'success' | 'failed' | 'skipped' | 'not_started'
+  symbolCount?: number
+  error?: string
+  timestamp?: string
+}
+
+export interface IndexStatus {
+  searchMode: string
+  bm25: IndexPipelineStatus
+  vector: IndexPipelineStatus
+  lastUpdated: string
+}
+
+export async function writeIndexStatus(safeFs: SafeFS, status: IndexStatus): Promise<void> {
+  const logDir = path.join(safeFs.getCondexDir(), 'index')
+  try {
+    await safeFs.mkdir(logDir)
+  } catch { /* already exists */ }
+
+  const filePath = path.join(logDir, 'index-status.json')
+  await safeFs.writeFile(filePath, JSON.stringify(status, null, 2))
+}
+
+export async function readIndexStatus(safeFs: SafeFS): Promise<IndexStatus | null> {
+  const filePath = path.join(safeFs.getCondexDir(), 'index', 'index-status.json')
+  if (!await safeFs.exists(filePath)) return null
+  try {
+    const content = await safeFs.readFile(filePath)
+    return JSON.parse(content) as IndexStatus
+  } catch {
+    return null
+  }
+}
+
 // ── Error Log ────────────────────────────────────────────────
 
 export async function writeErrorLog(safeFs: SafeFS, error: {
