@@ -294,7 +294,7 @@ function hashContent(content: string): string {
 function detectLanguage(projectRoot: string): string {
   // Priority-ordered: Java > TypeScript > Python
   // Use glob to search any depth (real projects can be 20+ levels deep)
-  const ignore = ['**/node_modules/**', '**/build/**', '**/target/**', '**/dist/**', '**/.git/**', '**/.condex/**']
+  const ignore = ['**/node_modules/**', '**/build/classes/**', '**/build/generated/**', '**/build/libs/**', '**/build/tmp/**', '**/target/classes/**', '**/target/generated-sources/**', '**/target/test-classes/**', '**/dist/out/**', '**/.git/**', '**/.condex/**']
 
   const javaMarkers = ['pom.xml', 'build.gradle', 'build.gradle.kts']
   for (const marker of javaMarkers) {
