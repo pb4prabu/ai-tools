@@ -33,7 +33,7 @@ echo "  Condex MCP — Setup"
 echo "========================================="
 
 # ── Step 1: Check Node.js ──────────────────────────
-step "1/5" "Checking Node.js..."
+step "1/6" "Checking Node.js..."
 
 if ! command -v node &> /dev/null; then
   fail "Node.js not found. Install Node.js >= $MIN_NODE_MAJOR from https://nodejs.org"
@@ -50,7 +50,7 @@ fi
 ok "Node.js $NODE_VERSION"
 
 # ── Step 2: Check npm ─────────────────────────────
-step "2/5" "Checking npm..."
+step "2/6" "Checking npm..."
 
 if ! command -v npm &> /dev/null; then
   fail "npm not found. Install npm (comes with Node.js)"
@@ -61,20 +61,20 @@ NPM_VERSION=$(npm -v)
 ok "npm $NPM_VERSION"
 
 # ── Step 3: Install dependencies ──────────────────
-step "3/5" "Installing dependencies..."
+step "3/6" "Installing dependencies..."
 
 cd "$SCRIPT_DIR"
 npm install 2>&1 | tail -3
 ok "Dependencies installed"
 
 # ── Step 4: Build ─────────────────────────────────
-step "4/5" "Building all packages..."
+step "4/6" "Building all packages..."
 
 npm run build 2>&1 | tail -5
 ok "Build complete"
 
 # ── Step 5: Download embedding model ──────────────
-step "5/5" "Setting up embedding model..."
+step "5/6" "Setting up embedding model..."
 
 if [ -f "$ONNX_DIR/model_quantized.onnx" ]; then
   ONNX_SIZE=$(du -h "$ONNX_DIR/model_quantized.onnx" | cut -f1)
@@ -119,6 +119,51 @@ else
   exit 1
 fi
 
+# ── Step 6: Generate sample config files ─────────
+step "6/6" "Generating sample config files..."
+
+MCP_SAMPLE="$SCRIPT_DIR/mcp.sample.jsonc"
+OC_SAMPLE="$SCRIPT_DIR/opencode.sample.jsonc"
+
+cat > "$MCP_SAMPLE" <<MCPEOF
+// Condex MCP config for Claude Code
+// Copy the "condex" entry below into your project's .mcp.json under "mcpServers"
+{
+  "mcpServers": {
+    "condex": {
+      "command": "node",
+      "args": ["$SERVER_JS"],
+      "env": {
+        "CONDEX_SEARCH_MODE": "vector,bm25",
+        "CONDEX_BM25_MIN_SCORE": "0.3",
+        "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
+      }
+    }
+  }
+}
+MCPEOF
+ok "mcp.sample.jsonc"
+
+cat > "$OC_SAMPLE" <<OCEOF
+// Condex MCP config for OpenCode / Dayton
+// Copy the "condex" entry below into your project's opencode.json under "mcp"
+{
+  "mcp": {
+    "condex": {
+      "type": "local",
+      "command": ["node", "$SERVER_JS"],
+      "environment": {
+        "CONDEX_SEARCH_MODE": "vector,bm25",
+        "CONDEX_BM25_MIN_SCORE": "0.3",
+        "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
+      },
+      "enabled": true
+    }
+  }
+}
+OCEOF
+ok "opencode.sample.jsonc"
+
 # ── Done ──────────────────────────────────────────
 echo ""
 echo "========================================="
@@ -132,6 +177,13 @@ echo "========================================="
 echo "  Next: Add Condex to your project"
 echo "========================================="
 echo ""
-echo "  Run this to setup Condex MCP in your project:"
+echo "  Option 1: Auto-create config files in your project:"
 echo -e "    ${CYAN}npx condex setup /path/to/your/project${NC}"
+echo ""
+echo "  Option 2: Manually copy the sample files to your project:"
+echo "    $MCP_SAMPLE"
+echo "    $OC_SAMPLE"
+echo ""
+echo "  Copy mcp.sample.jsonc  → .mcp.json in your project root (Claude Code)"
+echo "  Copy opencode.sample.jsonc → opencode.json in your project root (OpenCode / Dayton)"
 echo ""
