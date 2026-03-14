@@ -14,6 +14,7 @@ With Condex:     Agent queries 4 symbols  →  6,588 tokens (91.8% saved)
 ## Table of Contents
 
 - [Setup](#setup)
+- [Agent Instructions](#agent-instructions)
 - [How It Works](#how-it-works)
 - [Search Chain](#search-chain)
 - [MCP Tools](#mcp-tools)
@@ -114,6 +115,108 @@ npx condex index [path] --full    # Force full re-index
 npx condex status [path]          # Show index status
 npx condex invalidate [path]      # Delete index (triggers re-index on next use)
 ```
+
+---
+
+## Agent Instructions
+
+After setting up Condex, add the following instructions to your agent's configuration file so it knows how to use the MCP tools effectively. Copy the snippet that matches your agent.
+
+### Claude Code — add to `CLAUDE.md`
+
+````markdown
+## Condex MCP — Code Index
+
+This project has Condex MCP configured for token-efficient code navigation. **Use Condex tools instead of reading entire source files whenever possible.**
+
+### How to use
+
+1. **Start with the outline** — call `get_project_outline` to understand project structure before diving in.
+2. **Search, don't read** — use `search_symbols` to find relevant code by name or description. Use `search_schema` for database tables/columns.
+3. **Retrieve precisely** — use `get_symbol` or `get_symbols` to read only the exact source code you need (by symbol ID from search results).
+4. **Task context** — use `get_context_for_task` to get a curated context block within a token budget when starting a new task.
+5. **File outline** — use `get_file_outline` to list symbols in a file (signatures only) before deciding what to read.
+6. **Fall back to file reads** — only read full files when Condex returns no results or you need surrounding context.
+
+### Search tips
+
+- Use natural language for semantic search: `search_symbols(query="how does payment processing work?")`
+- Use exact names for keyword search: `search_symbols(query="CreateOrderHandler")`
+- Filter by kind: `search_symbols(query="order", kind="class")`
+- Filter by Spring role: `search_symbols(query="order", springRole="SERVICE")`
+- Filter by hex role: `search_symbols(query="order", hexRole="USE_CASE_HANDLER")`
+- Filter by file path: `search_symbols(query="order", filePattern="adapter")`
+
+### Stats
+
+At the end of each conversation, print a Condex usage summary:
+
+```
+📊 Condex Stats: {n} queries (bm25:{x}, vector:{y}) | hits: {h}/{n} ({pct}%) | used: ~{t1} tok | w/o Condex: ~{t2} tok | saved: ~{t3} ({pct2}%)
+```
+
+Collect these numbers from the `_meta` field returned by every Condex tool call. Track cumulative totals across all calls in the conversation.
+````
+
+### GitHub Copilot — add to `.github/copilot-instructions.md`
+
+````markdown
+## Condex MCP — Code Index
+
+This project has Condex MCP configured. Use Condex MCP tools instead of reading entire source files.
+
+**Workflow:**
+1. `get_project_outline` — understand project structure first
+2. `search_symbols(query="...")` — find code by name or description (supports filters: kind, springRole, hexRole, filePattern)
+3. `get_symbol(symbolId="...")` — read exact source code by symbol ID
+4. `get_context_for_task(task="...")` — get curated context for a task within a token budget
+5. Only read full files when Condex returns no results
+
+**At the end of the conversation, print:**
+```
+📊 Condex Stats: {n} queries (bm25:{x}, vector:{y}) | hits: {h}/{n} ({pct}%) | used: ~{t1} tok | w/o Condex: ~{t2} tok | saved: ~{t3} ({pct2}%)
+```
+Collect numbers from the `_meta` field in every Condex tool response.
+````
+
+### OpenCode / Dayton / Other MCP Agents — add to your agent instruction file
+
+````markdown
+## Condex MCP — Code Index
+
+This project uses Condex MCP for token-efficient code navigation. Always prefer Condex tools over reading raw files.
+
+**Tools (in order of typical use):**
+1. `get_project_outline` — project structure overview
+2. `search_symbols` — find symbols by query, kind, role, file pattern
+3. `get_symbol` / `get_symbols` — retrieve source code by symbol ID
+4. `get_file_outline` — list symbols in a specific file
+5. `search_schema` — search database tables/columns
+6. `get_context_for_task` — assembled context within token budget
+7. `index_folder` — force re-index (rarely needed)
+8. `invalidate_cache` — clear index
+
+**Stats — print at end of conversation:**
+```
+📊 Condex Stats: {n} queries (bm25:{x}, vector:{y}) | hits: {h}/{n} ({pct}%) | used: ~{t1} tok | w/o Condex: ~{t2} tok | saved: ~{t3} ({pct2}%)
+```
+Track `_meta.tokensInResponse`, `_meta.tokensIfNaive`, `_meta.symbolsReturned`, and `_meta.searchMode` from each Condex tool response.
+````
+
+### Understanding the stats line
+
+```
+📊 Condex Stats: 12 queries (bm25:6, vector:6) | hits: 8/12 (67%) | used: ~2,800 tok | w/o Condex: ~8,100 tok | saved: ~5,300 (65%)
+```
+
+| Field | Source | Meaning |
+|-------|--------|---------|
+| `queries` | Count of Condex tool calls | Total search/retrieval calls made |
+| `bm25:x, vector:y` | `_meta.searchMode` | Breakdown by search mode |
+| `hits` | Calls where `_meta.symbolsReturned > 0` | How often Condex found relevant results |
+| `used` | Sum of `_meta.tokensInResponse` | Actual tokens consumed via Condex |
+| `w/o Condex` | Sum of `_meta.tokensIfNaive` | Tokens if agent had read full files instead |
+| `saved` | `tokensIfNaive - tokensInResponse` | Token savings from using Condex |
 
 ---
 
