@@ -331,8 +331,8 @@ async function findSourceFiles(
   config: Partial<CondexConfig>
 ): Promise<string[]> {
   const extensionMap: Record<string, string[]> = {
-    java: ['**/*.java'],
-    typescript: ['**/*.ts', '**/*.tsx'],
+    java: ['**/*.java', '**/*.kt', '**/*.kts'],
+    typescript: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     python: ['**/*.py'],
   }
   const include = config.include ?? extensionMap[language] ?? extensionMap.java

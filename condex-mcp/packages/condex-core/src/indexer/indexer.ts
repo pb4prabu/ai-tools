@@ -185,36 +185,49 @@ export async function indexProject(
         profile: opts.detectArch ? opts.detectArch(sourceFiles) : undefined,
       }
 
+      let parsed = false
+
       if (opts.parseFileWithRefs) {
         try {
           const result = opts.parseFileWithRefs(content, parseOpts)
-          allSymbols.push(...result.symbols)
-          allRefs.push(...result.refs)
-          filesProcessed++
-          if (result.symbols.length === 0 && relPath.endsWith('.java')) {
+          if (result.symbols.length > 0) {
+            allSymbols.push(...result.symbols)
+            allRefs.push(...result.refs)
+            filesProcessed++
+            parsed = true
+          } else if (relPath.endsWith('.java')) {
             zeroSymbolFiles.push(relPath)
             console.error(`[condex] WARNING: 0 symbols from language parser for ${relPath} (${content.length} bytes)`)
           }
         } catch (err: any) {
-          console.error(`[condex] Error parsing ${relPath}: ${err.message}`)
+          console.error(`[condex] Language parser failed for ${relPath}, falling back to generic: ${err.message}`)
           parseErrors++
-          filesSkipped++
-          skippedFiles.push({ file: relPath, reason: 'parse_error', detail: err.message })
         }
       } else if (opts.parseFile) {
         try {
           const symbols = opts.parseFile(content, parseOpts)
-          allSymbols.push(...symbols)
-          filesProcessed++
+          if (symbols.length > 0) {
+            allSymbols.push(...symbols)
+            filesProcessed++
+            parsed = true
+          }
         } catch (err: any) {
-          console.error(`[condex] Error parsing ${relPath}: ${err.message}`)
+          console.error(`[condex] Language parser failed for ${relPath}, falling back to generic: ${err.message}`)
           parseErrors++
-          filesSkipped++
-          skippedFiles.push({ file: relPath, reason: 'parse_error', detail: err.message })
         }
-      } else {
-        filesSkipped++
-        skippedFiles.push({ file: relPath, reason: 'no_parser' })
+      }
+
+      // Fallback: if language parser didn't produce symbols, use generic file parser
+      // This ensures ALL source files (Python, Kotlin, etc.) are searchable via BM25 + Vector
+      if (!parsed) {
+        const sym = parseGenericFile(content, { projectId, filePath: relPath })
+        if (sym) {
+          allSymbols.push(sym)
+          filesProcessed++
+        } else {
+          filesSkipped++
+          skippedFiles.push({ file: relPath, reason: 'no_parser', detail: 'Both language and generic parsers returned no symbols' })
+        }
       }
     }
     if (parseErrors > 0) {
@@ -435,8 +448,8 @@ async function findSourceFiles(
   config: Partial<CondexConfig>
 ): Promise<string[]> {
   const extensionMap: Record<string, string[]> = {
-    java: ['**/*.java'],
-    typescript: ['**/*.ts', '**/*.tsx'],
+    java: ['**/*.java', '**/*.kt', '**/*.kts'],
+    typescript: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     python: ['**/*.py'],
   }
 
