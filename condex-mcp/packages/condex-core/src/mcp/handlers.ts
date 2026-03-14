@@ -19,13 +19,11 @@ import {
 import { buildMeta, countTokens } from './meta.js'
 import type { IncrementalReindexer } from '../indexer/incremental-reindexer.js'
 
-export type SearchMode = 'bm25' | 'vector' | 'hybrid' | 'smart'
+export type SearchMode = 'bm25' | 'vector' | 'hybrid'
 
 export interface SearchThresholds {
   bm25MinScore: number
   vectorMaxDistance: number
-  smartBm25MinScore: number
-  smartVectorMaxDistance: number
 }
 
 export interface HandlerContext {
@@ -34,7 +32,7 @@ export interface HandlerContext {
   projectId: string
   projectName: string
   architecture: string | null
-  searchMode: SearchMode
+  searchChain: SearchMode[]
   embedder: Embedder | null
   thresholds: SearchThresholds
   reindexer?: IncrementalReindexer | null
@@ -278,123 +276,72 @@ export async function handleSearchSymbols(
     filePattern: args.filePattern,
   }
 
-  let results: SearchResult[]
+  let results: SearchResult[] = []
   let gateFired = false
   let topScore = 0
 
-  if (ctx.searchMode === 'bm25') {
-    // ── BM25 only — score threshold, no count limit ──
-    const rawResults = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
-    topScore = rawResults[0]?.bm25Score ?? 0
+  // ── Chain-based search: try each mode in order, stop on first success ──
+  for (let i = 0; i < ctx.searchChain.length; i++) {
+    const mode = ctx.searchChain[i]
+    const isFirstInChain = i === 0
+    const suffix = isFirstInChain ? '' : '-fallback'
 
-    if (rawResults.length === 0) {
-      const reason = `No symbols found matching "${args.query}"`
-      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: false, topScore: 0 })
-      return textResult(reason, meta as unknown as Record<string, unknown>)
-    }
-
-    results = rawResults.map(r => bm25ResultToSearchResult(r, 'bm25'))
-    // Expand with call graph
-    results = expandWithCallGraph(ctx.db, results, pid)
-
-  } else if (ctx.searchMode === 'vector') {
-    // ── Vector primary, BM25 fallback ──
-    if (ctx.embedder) {
-      const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
-      topScore = vecResults.length > 0 ? (1 - vecResults[0].distance) : 0
-
-      if (vecResults.length > 0) {
-        results = vecResults.map(v => vectorResultToSearchResult(v, ctx.db, 'vector'))
-      } else {
-        // Vector returned nothing — fall back to BM25
-        gateFired = true
-        const rawResults = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
-        topScore = rawResults[0]?.bm25Score ?? 0
-        if (rawResults.length === 0) {
-          const reason = `No symbols found matching "${args.query}" (vector and BM25 both empty)`
-          const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: 0 })
-          return textResult(reason, meta as unknown as Record<string, unknown>)
-        }
-        results = rawResults.map(r => bm25ResultToSearchResult(r, 'bm25-fallback'))
-        results = expandWithCallGraph(ctx.db, results, pid)
-      }
-    } else {
-      // Embedder unavailable — fall back to BM25
-      gateFired = true
+    if (mode === 'bm25') {
       const rawResults = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
-      topScore = rawResults[0]?.bm25Score ?? 0
-      if (rawResults.length === 0) {
-        const reason = `No symbols found matching "${args.query}" (vector unavailable, BM25 empty)`
-        const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: 0 })
-        return textResult(reason, meta as unknown as Record<string, unknown>)
+      if (rawResults.length > 0) {
+        topScore = rawResults[0].bm25Score
+        results = rawResults.map(r => bm25ResultToSearchResult(r, `bm25${suffix}`))
+        results = expandWithCallGraph(ctx.db, results, pid)
+        if (!isFirstInChain) gateFired = true
+        break
       }
-      results = rawResults.map(r => bm25ResultToSearchResult(r, 'bm25-fallback'))
-      results = expandWithCallGraph(ctx.db, results, pid)
-    }
-
-  } else if (ctx.searchMode === 'smart') {
-    // ── Smart: BM25 first (conservative), vector fallback ──
-    const rawResults = searchBM25(ctx.db, args.query, pid, filters, thresholds.smartBm25MinScore)
-    topScore = rawResults[0]?.bm25Score ?? 0
-
-    if (rawResults.length > 0) {
-      // BM25 found results above conservative threshold — use them
-      gateFired = false
-      results = rawResults.map(r => bm25ResultToSearchResult(r, 'bm25'))
-      // Expand with call graph
-      results = expandWithCallGraph(ctx.db, results, pid)
-    } else if (ctx.embedder) {
-      // BM25 didn't find confident results — fall back to vector
-      gateFired = true
-      const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.smartVectorMaxDistance)
-      if (vecResults.length === 0) {
-        const reason = `No symbols found matching "${args.query}" (BM25 and vector both empty)`
-        const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore })
-        return textResult(reason, meta as unknown as Record<string, unknown>)
+    } else if (mode === 'vector') {
+      if (ctx.embedder) {
+        const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
+        if (vecResults.length > 0) {
+          topScore = 1 - vecResults[0].distance
+          results = vecResults.map(v => vectorResultToSearchResult(v, ctx.db, `vector${suffix}`))
+          if (!isFirstInChain) gateFired = true
+          break
+        }
       }
-      results = vecResults.map(v => vectorResultToSearchResult(v, ctx.db, 'vector-fallback'))
-    } else {
-      // No embedder — return empty
-      gateFired = true
-      const reason = `No symbols found matching "${args.query}"`
-      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore })
-      return textResult(reason, meta as unknown as Record<string, unknown>)
-    }
-
-  } else {
-    // ── Hybrid: BM25 + Vector with RRF fusion ──
-    const bm25Results = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
-
-    let vecResults: VectorResult[] = []
-    if (ctx.embedder) {
-      vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
-    }
-
-    if (bm25Results.length === 0 && vecResults.length === 0) {
-      const reason = `No symbols found matching "${args.query}"`
-      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: false, topScore: 0 })
-      return textResult(reason, meta as unknown as Record<string, unknown>)
-    }
-
-    const fused = rrfFusion(bm25Results, vecResults, 200) // no artificial limit
-    topScore = fused[0]?.rrfScore ?? 0
-
-    results = fused.map(f => {
-      const sym = getSymbolById(ctx.db, f.symbolId)
-      return {
-        symbolId: f.symbolId,
-        qualifiedName: sym?.qualifiedName ?? f.symbolId,
-        signature: sym?.signature ?? '',
-        kind: sym?.kind ?? '',
-        filePath: sym?.filePath ?? '',
-        springRole: sym?.springRole ?? undefined,
-        hexRole: sym?.hexRole ?? undefined,
-        score: Math.round(f.rrfScore * 10000) / 10000,
-        searchMode: 'hybrid',
+      // Embedder unavailable or returned nothing — continue to next in chain
+    } else if (mode === 'hybrid') {
+      const bm25Results = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
+      let vecResults: VectorResult[] = []
+      if (ctx.embedder) {
+        vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
       }
-    })
-    // Expand with call graph
-    results = expandWithCallGraph(ctx.db, results, pid)
+      if (bm25Results.length > 0 || vecResults.length > 0) {
+        const fused = rrfFusion(bm25Results, vecResults, 200)
+        topScore = fused[0]?.rrfScore ?? 0
+        results = fused.map(f => {
+          const sym = getSymbolById(ctx.db, f.symbolId)
+          return {
+            symbolId: f.symbolId,
+            qualifiedName: sym?.qualifiedName ?? f.symbolId,
+            signature: sym?.signature ?? '',
+            kind: sym?.kind ?? '',
+            filePath: sym?.filePath ?? '',
+            springRole: sym?.springRole ?? undefined,
+            hexRole: sym?.hexRole ?? undefined,
+            score: Math.round(f.rrfScore * 10000) / 10000,
+            searchMode: `hybrid${suffix}`,
+          }
+        })
+        results = expandWithCallGraph(ctx.db, results, pid)
+        if (!isFirstInChain) gateFired = true
+        break
+      }
+    }
+  }
+
+  // Chain exhausted with no results
+  if (results.length === 0) {
+    const chainStr = ctx.searchChain.join(' → ')
+    const reason = `No symbols found matching "${args.query}" (tried: ${chainStr})`
+    const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: 0 })
+    return textResult(reason, meta as unknown as Record<string, unknown>)
   }
 
   const text = JSON.stringify(results, null, 2)
@@ -675,7 +622,7 @@ export async function handleGetContextForTask(
   const context: Record<string, unknown> = {
     task: args.task,
     projectId: pid,
-    searchMode: ctx.searchMode,
+    searchChain: ctx.searchChain,
   }
 
   let usedTokens = estimateTokens(JSON.stringify(context))

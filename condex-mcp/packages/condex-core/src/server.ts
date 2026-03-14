@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
-// Block outbound network unless vector/hybrid mode needs model download
+// Block outbound network unless vector/hybrid is in the search chain (needs model download)
 import { blockOutboundNetwork } from './security/network-guard.js'
-const searchMode = process.env.CONDEX_SEARCH_MODE ?? 'vector'
-if (searchMode === 'bm25') {
+const rawSearchMode = process.env.CONDEX_SEARCH_MODE ?? 'vector,bm25'
+const needsNetwork = rawSearchMode.includes('vector') || rawSearchMode.includes('hybrid')
+if (!needsNetwork) {
   blockOutboundNetwork()
 } else {
-  console.error(`[condex] Network guard DISABLED for ${searchMode} mode (model download may be needed)`)
+  console.error(`[condex] Network guard DISABLED (vector/hybrid in chain — model download may be needed)`)
 }
-// smart mode also needs embedder for vector fallback
 
 import path from 'node:path'
 import { createRequire } from 'node:module'
@@ -29,20 +29,27 @@ import { TOOL_DEFINITIONS } from './mcp/tools.js'
 import { dispatch } from './mcp/dispatcher.js'
 import { setSavingsTracker } from './mcp/meta.js'
 import { SavingsTracker } from './token/savings.js'
-import type { HandlerContext, SearchMode } from './mcp/handlers.js'
+import type { HandlerContext } from './mcp/handlers.js'
 import type { Embedder } from './embeddings/local-embed.js'
 import { loadVec, insertVectors } from './retrieval/vector-search.js'
 import { writeErrorLog, writeIndexStatus, initCondexDir, type IndexStatus } from './store/fs-store.js'
 
 const PROJECT_ROOT = path.resolve(process.cwd())
 const TOOL_VERSION = '1.0.0'
-const SEARCH_MODE = (process.env.CONDEX_SEARCH_MODE ?? 'vector') as SearchMode
+
+// Parse search chain: "vector,bm25" → ['vector', 'bm25']
+// Default: vector first, BM25 fallback
+type SearchMode = 'bm25' | 'vector' | 'hybrid'
+const VALID_MODES = new Set<string>(['bm25', 'vector', 'hybrid'])
+const SEARCH_CHAIN: SearchMode[] = (process.env.CONDEX_SEARCH_MODE ?? 'vector,bm25')
+  .split(',')
+  .map(s => s.trim().toLowerCase())
+  .filter(s => VALID_MODES.has(s)) as SearchMode[]
+if (SEARCH_CHAIN.length === 0) SEARCH_CHAIN.push('vector', 'bm25') // safe fallback
 
 // Configurable thresholds via env vars
 const BM25_MIN_SCORE = parseFloat(process.env.CONDEX_BM25_MIN_SCORE ?? '0.3')
 const VECTOR_MAX_DISTANCE = parseFloat(process.env.CONDEX_VECTOR_MAX_DISTANCE ?? '0.95')
-const SMART_BM25_MIN_SCORE = parseFloat(process.env.CONDEX_SMART_BM25_MIN_SCORE ?? '0.5')
-const SMART_VECTOR_MAX_DISTANCE = parseFloat(process.env.CONDEX_SMART_VECTOR_MAX_DISTANCE ?? '0.90')
 
 /**
  * Try to load the Java parser. Returns null if not installed.
@@ -162,11 +169,13 @@ async function main() {
   // Auto-index on startup
   let architecture: string | null = null
   const indexStatus: IndexStatus = {
-    searchMode: SEARCH_MODE,
+    searchMode: SEARCH_CHAIN.join(','),
     bm25: { status: 'not_started' },
     vector: { status: 'not_started' },
     lastUpdated: new Date().toISOString(),
   }
+
+  const chainNeedsVector = SEARCH_CHAIN.includes('vector') || SEARCH_CHAIN.includes('hybrid')
 
   let bm25SymbolCount = 0
   try {
@@ -214,18 +223,18 @@ async function main() {
         phase: 'startup:bm25',
         message: err.message,
         stack: err.stack,
-        context: { projectRoot: PROJECT_ROOT, searchMode: SEARCH_MODE },
+        context: { projectRoot: PROJECT_ROOT, searchChain: SEARCH_CHAIN },
       })
     } catch { /* best effort */ }
   }
 
-  // Initialize embedder — vector is default, gracefully degrades to BM25 if unavailable
-  console.error(`[condex] Search mode: ${SEARCH_MODE}`)
+  // Initialize embedder if vector/hybrid is in the chain
+  console.error(`[condex] Search chain: [${SEARCH_CHAIN.join(', ')}]`)
   let embedder: Embedder | null = null
   let vecReady = false
-  let effectiveSearchMode: SearchMode = SEARCH_MODE
+  let effectiveSearchChain = [...SEARCH_CHAIN]
 
-  if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid' || SEARCH_MODE === 'smart') {
+  if (chainNeedsVector) {
     // Step 1: Load sqlite-vec extension
     console.error(`[condex] [1/3] Loading sqlite-vec extension...`)
     try {
@@ -234,9 +243,10 @@ async function main() {
       vecReady = true
     } catch (err: any) {
       console.error(`[condex] WARNING: sqlite-vec failed to load: ${err.message}`)
-      console.error(`[condex] Falling back to BM25-only search`)
+      console.error(`[condex] Removing vector/hybrid from search chain`)
       indexStatus.vector = { status: 'failed', error: `sqlite-vec load failed: ${err.message}`, timestamp: new Date().toISOString() }
-      effectiveSearchMode = 'bm25'
+      effectiveSearchChain = effectiveSearchChain.filter(m => m === 'bm25')
+      if (effectiveSearchChain.length === 0) effectiveSearchChain.push('bm25')
     }
 
     // Step 2: Load embedding model (skip if step 1 failed)
@@ -251,10 +261,11 @@ async function main() {
         console.error(`[condex] [2/3] Embedder ready (${embedder.dimensions} dimensions)`)
       } catch (err: any) {
         console.error(`[condex] WARNING: Embedding model failed to load: ${err.message}`)
-        console.error(`[condex] Falling back to BM25-only search`)
+        console.error(`[condex] Removing vector/hybrid from search chain`)
         vecReady = false
         indexStatus.vector = { status: 'failed', error: `Embedding model failed: ${err.message}`, timestamp: new Date().toISOString() }
-        effectiveSearchMode = 'bm25'
+        effectiveSearchChain = effectiveSearchChain.filter(m => m === 'bm25')
+        if (effectiveSearchChain.length === 0) effectiveSearchChain.push('bm25')
       }
     }
 
@@ -301,13 +312,13 @@ async function main() {
           phase: 'startup:vector',
           message: err.message,
           stack: err.stack,
-          context: { projectRoot: PROJECT_ROOT, searchMode: SEARCH_MODE, bm25SymbolCount },
+          context: { projectRoot: PROJECT_ROOT, searchChain: SEARCH_CHAIN, bm25SymbolCount },
         })
       } catch { /* best effort */ }
     }
     } // end if (vecReady && embedder)
   } else {
-    indexStatus.vector = { status: 'skipped', error: `Search mode is ${SEARCH_MODE} — vector not needed`, timestamp: new Date().toISOString() }
+    indexStatus.vector = { status: 'skipped', error: `Search chain [${SEARCH_CHAIN.join(',')}] does not include vector/hybrid`, timestamp: new Date().toISOString() }
   }
 
   // Write final index status
@@ -318,7 +329,7 @@ async function main() {
   const savings = new SavingsTracker(safeFs)
   setSavingsTracker(savings)
 
-  console.error(`[condex] Thresholds: bm25=${BM25_MIN_SCORE}, vector=${VECTOR_MAX_DISTANCE}, smart_bm25=${SMART_BM25_MIN_SCORE}, smart_vector=${SMART_VECTOR_MAX_DISTANCE}`)
+  console.error(`[condex] Thresholds: bm25=${BM25_MIN_SCORE}, vector=${VECTOR_MAX_DISTANCE}`)
 
   // Initialize incremental reindexer for query-time change detection
   let reindexer: IncrementalReindexer | null = null
@@ -354,8 +365,8 @@ async function main() {
     }
   }
 
-  if (effectiveSearchMode !== SEARCH_MODE) {
-    console.error(`[condex] Effective search mode: ${effectiveSearchMode} (requested: ${SEARCH_MODE})`)
+  if (effectiveSearchChain.join(',') !== SEARCH_CHAIN.join(',')) {
+    console.error(`[condex] Effective search chain: [${effectiveSearchChain.join(', ')}] (requested: [${SEARCH_CHAIN.join(', ')}])`)
   }
 
   // Build handler context
@@ -365,13 +376,11 @@ async function main() {
     projectId: namespace,
     projectName,
     architecture,
-    searchMode: effectiveSearchMode,
+    searchChain: effectiveSearchChain,
     embedder,
     thresholds: {
       bm25MinScore: BM25_MIN_SCORE,
       vectorMaxDistance: VECTOR_MAX_DISTANCE,
-      smartBm25MinScore: SMART_BM25_MIN_SCORE,
-      smartVectorMaxDistance: SMART_VECTOR_MAX_DISTANCE,
     },
     reindexer,
   }

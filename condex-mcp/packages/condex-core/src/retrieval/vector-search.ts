@@ -73,7 +73,7 @@ export async function vectorSearch(
   if (!tableExists) {
     throw new Error(
       'Vector search unavailable: symbol_vectors table not found. ' +
-      'Ensure sqlite-vec is installed and CONDEX_SEARCH_MODE is set to vector, hybrid, or smart.'
+      'Ensure sqlite-vec is installed and CONDEX_SEARCH_MODE includes vector or hybrid.'
     )
   }
 

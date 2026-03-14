@@ -432,12 +432,21 @@ Cumulative savings persisted in `.condex/savings.json`.
 
 | Variable | Values | Default | Purpose |
 |----------|--------|---------|---------|
-| `CONDEX_SEARCH_MODE` | `bm25` / `vector` / `hybrid` / `smart` | `vector` | Search algorithm. Vector is default; falls back to BM25 if sqlite-vec or embedder unavailable |
+| `CONDEX_SEARCH_MODE` | Comma-separated chain: `bm25`, `vector`, `hybrid` | `vector,bm25` | Search priority chain. Tries modes left-to-right, stops on first success. |
 | `CONDEX_MODEL_CACHE_DIR` | Absolute path | `~/.condex/models/` | Override embedding model cache location |
 | `CONDEX_BM25_MIN_SCORE` | Float | `0.3` | Minimum BM25 score threshold |
 | `CONDEX_VECTOR_MAX_DISTANCE` | Float | `0.95` | Maximum vector distance threshold |
-| `CONDEX_SMART_BM25_MIN_SCORE` | Float | `0.5` | Stricter BM25 threshold for smart mode |
-| `CONDEX_SMART_VECTOR_MAX_DISTANCE` | Float | `0.90` | Vector distance threshold for smart fallback |
+
+#### Search Chain Examples
+
+| Chain | Behavior |
+|-------|----------|
+| `vector,bm25` | Vector first, BM25 fallback (default) |
+| `bm25,vector` | BM25 first, vector fallback on no results |
+| `vector` | Vector only, no fallback |
+| `bm25` | BM25 only (fastest, no model needed) |
+| `hybrid` | RRF fusion of BM25 + vector (always runs both) |
+| `hybrid,bm25` | Hybrid first, BM25 fallback if both empty |
 
 ### Project Config (optional)
 
