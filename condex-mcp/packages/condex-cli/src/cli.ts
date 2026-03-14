@@ -206,27 +206,35 @@ async function handleSetup() {
     console.log(`✓ Created: ${opencodePath}`)
   }
 
+  // ANSI colors for terminal output
+  const YELLOW = '\x1b[33m'
+  const RESET = '\x1b[0m'
+
   // If either file already existed, show warning + inline snippet
   let manualActionNeeded = false
   if (mcpExisted || ocExisted) {
     manualActionNeeded = true
+    const existingFiles = [mcpExisted && '.mcp.json', ocExisted && 'opencode.json'].filter(Boolean)
+    const verb = existingFiles.length > 1 ? 'already exist' : 'already exists'
     console.log('')
+    console.log(`${YELLOW}⚠  ${existingFiles.join(' and ')} ${verb} at ${targetPath} — skipping auto-setup.${RESET}`)
+    console.log(`${YELLOW}   Manual action required: copy the condex snippet below into your project's MCP config.${RESET}`)
+
     if (mcpExisted) {
-      console.warn(`⚠  .mcp.json already exists at ${targetPath} — not overwriting.`)
-      console.log(`   Copy the snippet below into your .mcp.json under "mcpServers":`)
+      console.log('')
+      console.log(`   Add this under "mcpServers" in your .mcp.json:`)
       console.log('')
       const condexEntry = JSON.stringify({ condex: mcpJson.mcpServers.condex }, null, 2)
       for (const line of condexEntry.split('\n')) console.log(`   ${line}`)
-      console.log('')
     }
     if (ocExisted) {
-      console.warn(`⚠  opencode.json already exists at ${targetPath} — not overwriting.`)
-      console.log(`   Copy the snippet below into your opencode.json under "mcp":`)
+      console.log('')
+      console.log(`   Add this under "mcp" in your opencode.json:`)
       console.log('')
       const condexEntry = JSON.stringify({ condex: opencodeJson.mcp.condex }, null, 2)
       for (const line of condexEntry.split('\n')) console.log(`   ${line}`)
-      console.log('')
     }
+    console.log('')
     console.log(`   Sample files also available at:`)
     console.log(`     ${mcpSamplePath}`)
     console.log(`     ${ocSamplePath}`)
