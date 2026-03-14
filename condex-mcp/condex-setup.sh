@@ -73,6 +73,11 @@ step "4/6" "Building all packages..."
 npm run build 2>&1 | tail -5
 ok "Build complete"
 
+# Re-link workspace bins now that dist/ exists
+# (npm install creates bin symlinks before build, so they may be stale on first run)
+npm install --ignore-scripts 2>&1 | tail -1
+ok "Workspace bins linked"
+
 # ── Step 5: Download embedding model ──────────────
 step "5/6" "Setting up embedding model..."
 
