@@ -663,7 +663,10 @@ async function main() {
 
   // ── 2. Index project ──
   header('2. Indexing project')
-  const db = new Database(':memory:')
+  const condexDir = path.join(tmpDir, '.condex')
+  fs.mkdirSync(condexDir, { recursive: true })
+  const dbPath = path.join(condexDir, 'index.db')
+  const db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
   createSchema(db)
   const projectId = generateNamespace(tmpDir)

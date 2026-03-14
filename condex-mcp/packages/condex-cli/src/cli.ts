@@ -46,7 +46,10 @@ async function handleIndex() {
   console.log(`Indexing: ${targetPath}${full ? ' (full)' : ''}`)
 
   const safeFs = new SafeFS(targetPath)
-  const db = new Database(':memory:')
+  const condexDir = path.join(targetPath, '.condex')
+  fs.mkdirSync(condexDir, { recursive: true })
+  const dbPath = path.join(condexDir, 'index.db')
+  const db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
   createSchema(db)
 
@@ -82,6 +85,7 @@ async function handleIndex() {
   console.log(`  Files skipped: ${result.filesSkipped}`)
   console.log(`  Time: ${result.loadTimeMs}ms`)
   console.log(`  Mode: ${result.incremental ? 'incremental' : 'full'}`)
+  console.log(`  Database: ${dbPath}`)
 }
 
 async function handleStatus() {
@@ -118,10 +122,17 @@ async function handleInvalidate() {
   try {
     await safeFs.rm(indexDir)
     console.log(`Index invalidated: ${targetPath}`)
-    console.log('Next run will trigger a full re-index.')
   } catch (err: any) {
-    console.error(`Error: ${err.message}`)
+    if (err.code !== 'ENOENT') console.error(`Error removing index dir: ${err.message}`)
   }
+
+  // Also remove persistent SQLite DB files
+  const dbPath = path.join(targetPath, '.condex', 'index.db')
+  for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
+    try { fs.unlinkSync(f) } catch { /* ignore */ }
+  }
+  console.log(`Database removed: ${dbPath}`)
+  console.log('Next run will trigger a full re-index.')
 }
 
 async function handleSetup() {

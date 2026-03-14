@@ -10,6 +10,7 @@ if (!needsNetwork) {
   console.error(`[condex] Network guard DISABLED (vector/hybrid in chain — model download may be needed)`)
 }
 
+import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
@@ -141,15 +142,30 @@ async function main() {
   // Initialize SafeFS — restricts all file ops to project root
   const safeFs = new SafeFS(PROJECT_ROOT)
 
-  // Initialize in-memory SQLite
-  const db = new Database(':memory:')
+  // Initialize persistent SQLite at .condex/index.db
+  const condexDir = path.join(PROJECT_ROOT, '.condex')
+  fs.mkdirSync(condexDir, { recursive: true })
+  const dbPath = path.join(condexDir, 'index.db')
+  const dbExisted = fs.existsSync(dbPath)
+  let db: InstanceType<typeof Database>
+  try {
+    db = new Database(dbPath)
+  } catch {
+    // Corrupt DB — delete and retry
+    console.error(`[condex] WARNING: Corrupt index.db — recreating`)
+    try { fs.unlinkSync(dbPath) } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-wal') } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-shm') } catch { /* ignore */ }
+    db = new Database(dbPath)
+  }
   db.pragma('journal_mode = WAL')
-  createSchema(db)
+  createSchema(db) // uses IF NOT EXISTS — safe on existing DBs
 
   // Generate project namespace
   const namespace = generateNamespace(PROJECT_ROOT)
   const projectName = path.basename(PROJECT_ROOT)
   console.error(`[condex] Namespace: ${namespace}`)
+  console.error(`[condex] Database: ${dbPath} (${dbExisted ? 'existing' : 'new'})`)
 
   // Load parsers
   const javaParsers = loadJavaParser()
@@ -179,40 +195,63 @@ async function main() {
 
   let bm25SymbolCount = 0
   try {
-    const metaPath = path.join(PROJECT_ROOT, '.condex', 'index', 'meta.json')
-    if (safeFs.existsSync(metaPath)) {
-      // Existing index: load then run incremental
-      const loadResult = await loadProject(db, safeFs)
-      if (loadResult) {
-        architecture = loadResult.architecture
-        bm25SymbolCount = loadResult.symbolCount
-        console.error(
-          `[condex] Loaded: ${loadResult.symbolCount} symbols, ` +
-          `${loadResult.schemaCount} schema, ${loadResult.configCount} config ` +
-          `in ${loadResult.loadTimeMs}ms`
-        )
+    if (dbExisted) {
+      // Persistent DB exists — check if it has symbols (skip JSON loading)
+      bm25SymbolCount = (db.prepare('SELECT COUNT(*) as cnt FROM symbols WHERE project_id = ?')
+        .get(namespace) as any)?.cnt ?? 0
+      if (bm25SymbolCount > 0) {
+        // Read architecture from meta.json (lightweight)
+        const { readMeta: readMetaStartup } = await import('./store/fs-store.js')
+        const meta = await readMetaStartup(safeFs)
+        architecture = meta?.architecture ?? null
+        console.error(`[condex] Opened persistent DB: ${bm25SymbolCount} symbols`)
+        indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
+      } else {
+        // DB exists but empty — fall through to JSON loading or full index
+        console.error(`[condex] Persistent DB empty — loading from JSON or re-indexing`)
+        const metaPath = path.join(PROJECT_ROOT, '.condex', 'index', 'meta.json')
+        if (safeFs.existsSync(metaPath)) {
+          const loadResult = await loadProject(db, safeFs)
+          if (loadResult) {
+            architecture = loadResult.architecture
+            bm25SymbolCount = loadResult.symbolCount
+            console.error(`[condex] Loaded from JSON: ${loadResult.symbolCount} symbols in ${loadResult.loadTimeMs}ms`)
+          }
+          indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
+        } else if (compositeParser) {
+          console.error(`[condex] No existing index. Running full index...`)
+          const result = await indexProject(db, safeFs, { full: true, parseFileWithRefs: compositeParser, detectArch: javaParsers?.detectArch, parseSql: javaParsers?.parseSql, parseYaml: javaParsers?.parseYaml })
+          architecture = result.architecture
+          bm25SymbolCount = result.symbolCount
+          console.error(`[condex] Indexed: ${result.symbolCount} symbols from ${result.filesProcessed} files in ${result.loadTimeMs}ms`)
+          indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
+        } else {
+          console.error(`[condex] No parser available and no existing index. Install @condex-ai/java or @condex-ai/multi-lang.`)
+          indexStatus.bm25 = { status: 'skipped', error: 'No parser available', timestamp: new Date().toISOString() }
+        }
       }
-      indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
-    } else if (compositeParser) {
-      // No index: run full index
-      console.error(`[condex] No existing index. Running full index...`)
-      const result = await indexProject(db, safeFs, {
-        full: true,
-        parseFileWithRefs: compositeParser,
-        detectArch: javaParsers?.detectArch,
-        parseSql: javaParsers?.parseSql,
-        parseYaml: javaParsers?.parseYaml,
-      })
-      architecture = result.architecture
-      bm25SymbolCount = result.symbolCount
-      console.error(
-        `[condex] Indexed: ${result.symbolCount} symbols from ${result.filesProcessed} files ` +
-        `in ${result.loadTimeMs}ms`
-      )
-      indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
     } else {
-      console.error(`[condex] No parser available and no existing index. Install @condex-ai/java or @condex-ai/multi-lang.`)
-      indexStatus.bm25 = { status: 'skipped', error: 'No parser available', timestamp: new Date().toISOString() }
+      // Fresh DB — check for JSON index or run full index
+      const metaPath = path.join(PROJECT_ROOT, '.condex', 'index', 'meta.json')
+      if (safeFs.existsSync(metaPath)) {
+        const loadResult = await loadProject(db, safeFs)
+        if (loadResult) {
+          architecture = loadResult.architecture
+          bm25SymbolCount = loadResult.symbolCount
+          console.error(`[condex] Loaded from JSON into new DB: ${loadResult.symbolCount} symbols in ${loadResult.loadTimeMs}ms`)
+        }
+        indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
+      } else if (compositeParser) {
+        console.error(`[condex] No existing index. Running full index...`)
+        const result = await indexProject(db, safeFs, { full: true, parseFileWithRefs: compositeParser, detectArch: javaParsers?.detectArch, parseSql: javaParsers?.parseSql, parseYaml: javaParsers?.parseYaml })
+        architecture = result.architecture
+        bm25SymbolCount = result.symbolCount
+        console.error(`[condex] Indexed: ${result.symbolCount} symbols from ${result.filesProcessed} files in ${result.loadTimeMs}ms`)
+        indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
+      } else {
+        console.error(`[condex] No parser available and no existing index. Install @condex-ai/java or @condex-ai/multi-lang.`)
+        indexStatus.bm25 = { status: 'skipped', error: 'No parser available', timestamp: new Date().toISOString() }
+      }
     }
   } catch (err: any) {
     console.error(`[condex] Error during startup indexing: ${err.message}`)
@@ -271,51 +310,60 @@ async function main() {
 
     // Step 3: Build vector index for existing symbols (skip if step 1 or 2 failed)
     if (vecReady && embedder) {
-    console.error(`[condex] [3/3] Building vector index...`)
-    try {
-      const { prepareSymbolText } = await import('./embeddings/local-embed.js')
-      const allSymbols = db.prepare(
-        'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
-      ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]
-
-      if (allSymbols.length > 0) {
-        console.error(`[condex] Embedding ${allSymbols.length} symbols...`)
-        const batchSize = 50
-        let embedded = 0
-        for (let i = 0; i < allSymbols.length; i += batchSize) {
-          const batch = allSymbols.slice(i, i + batchSize)
-          const texts = batch.map(s => prepareSymbolText({
-            qualifiedName: s.qualified_name,
-            signature: s.signature,
-            javadoc: s.javadoc,
-            kind: s.kind,
-          }))
-          const embeddings = await embedder.embedBatch(texts)
-          const vectors = batch.map((s, idx) => ({
-            symbolId: s.id,
-            embedding: embeddings[idx],
-          }))
-          insertVectors(db, vectors)
-          embedded += batch.length
-        }
-        console.error(`[condex] [3/3] Vector index built for ${allSymbols.length} symbols`)
-        indexStatus.vector = { status: 'success', symbolCount: allSymbols.length, timestamp: new Date().toISOString() }
-      } else {
-        console.error(`[condex] [3/3] WARNING: 0 symbols to embed — vector index is empty`)
-        indexStatus.vector = { status: 'success', symbolCount: 0, error: 'No symbols to embed (BM25 index may be empty)', timestamp: new Date().toISOString() }
-      }
-    } catch (err: any) {
-      console.error(`[condex] Error building vector index: ${err.message}`)
-      indexStatus.vector = { status: 'failed', error: `Embedding failed: ${err.message}`, timestamp: new Date().toISOString() }
+      // Check if persistent DB already has vectors
+      let existingVecCount = 0
       try {
-        await writeErrorLog(safeFs, {
-          phase: 'startup:vector',
-          message: err.message,
-          stack: err.stack,
-          context: { projectRoot: PROJECT_ROOT, searchChain: SEARCH_CHAIN, bm25SymbolCount },
-        })
-      } catch { /* best effort */ }
-    }
+        existingVecCount = (db.prepare('SELECT COUNT(*) as cnt FROM symbol_vectors').get() as any)?.cnt ?? 0
+      } catch { /* table may not exist yet */ }
+
+      if (existingVecCount > 0 && dbExisted) {
+        console.error(`[condex] [3/3] Vector index loaded from persistent DB: ${existingVecCount} vectors`)
+        indexStatus.vector = { status: 'success', symbolCount: existingVecCount, timestamp: new Date().toISOString() }
+      } else {
+        console.error(`[condex] [3/3] Building vector index...`)
+        try {
+          const { prepareSymbolText } = await import('./embeddings/local-embed.js')
+          const allSymbols = db.prepare(
+            'SELECT id, qualified_name, signature, javadoc, kind FROM symbols WHERE project_id = ?'
+          ).all(namespace) as { id: string; qualified_name: string; signature: string; javadoc: string | null; kind: string }[]
+
+          if (allSymbols.length > 0) {
+            console.error(`[condex] Embedding ${allSymbols.length} symbols...`)
+            const batchSize = 50
+            for (let i = 0; i < allSymbols.length; i += batchSize) {
+              const batch = allSymbols.slice(i, i + batchSize)
+              const texts = batch.map(s => prepareSymbolText({
+                qualifiedName: s.qualified_name,
+                signature: s.signature,
+                javadoc: s.javadoc,
+                kind: s.kind,
+              }))
+              const embeddings = await embedder.embedBatch(texts)
+              const vectors = batch.map((s, idx) => ({
+                symbolId: s.id,
+                embedding: embeddings[idx],
+              }))
+              insertVectors(db, vectors)
+            }
+            console.error(`[condex] [3/3] Vector index built for ${allSymbols.length} symbols`)
+            indexStatus.vector = { status: 'success', symbolCount: allSymbols.length, timestamp: new Date().toISOString() }
+          } else {
+            console.error(`[condex] [3/3] WARNING: 0 symbols to embed — vector index is empty`)
+            indexStatus.vector = { status: 'success', symbolCount: 0, error: 'No symbols to embed (BM25 index may be empty)', timestamp: new Date().toISOString() }
+          }
+        } catch (err: any) {
+          console.error(`[condex] Error building vector index: ${err.message}`)
+          indexStatus.vector = { status: 'failed', error: `Embedding failed: ${err.message}`, timestamp: new Date().toISOString() }
+          try {
+            await writeErrorLog(safeFs, {
+              phase: 'startup:vector',
+              message: err.message,
+              stack: err.stack,
+              context: { projectRoot: PROJECT_ROOT, searchChain: SEARCH_CHAIN, bm25SymbolCount },
+            })
+          } catch { /* best effort */ }
+        }
+      }
     } // end if (vecReady && embedder)
   } else {
     indexStatus.vector = { status: 'skipped', error: `Search chain [${SEARCH_CHAIN.join(',')}] does not include vector/hybrid`, timestamp: new Date().toISOString() }
