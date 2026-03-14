@@ -150,6 +150,7 @@ async function handleSetup() {
         command: 'node',
         args: [serverPath],
         env: {
+          CONDEX_SEARCH_MODE: 'vector,bm25',
           CONDEX_BM25_MIN_SCORE: '0.3',
           CONDEX_VECTOR_MAX_DISTANCE: '0.95',
         },
@@ -183,6 +184,7 @@ async function handleSetup() {
           type: 'local',
           command: ['node', serverPath],
           environment: {
+            CONDEX_SEARCH_MODE: 'vector,bm25',
             CONDEX_BM25_MIN_SCORE: '0.3',
             CONDEX_VECTOR_MAX_DISTANCE: '0.95',
           },
