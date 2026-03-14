@@ -48,7 +48,14 @@ Behind a proxy: `HTTPS_PROXY=http://proxy:port bash condex-setup.sh`
 npx condex setup /path/to/your/project
 ```
 
-**Option B** — manually paste the config:
+**Option B** — copy config from setup script output:
+
+`condex-setup.sh` prints ready-to-use MCP configs at the end of setup (with the correct server path filled in). Copy the relevant snippet into your project:
+
+- **Claude Code** → paste into `.mcp.json` in your project root
+- **OpenCode** → paste into `opencode.json` in your project root
+
+**Option C** — manually create the config:
 
 **Claude Code** — create `.mcp.json` in your project root:
 
@@ -87,7 +94,7 @@ npx condex setup /path/to/your/project
 }
 ```
 
-> Replace `/absolute/path/to/condex-mcp` with the actual path. The `condex-setup.sh` script and `npx condex setup` both print the exact path.
+> Replace `/absolute/path/to/condex-mcp` with the actual path. Both `condex-setup.sh` and `npx condex setup` print the exact path.
 
 ### Model Cache
 
