@@ -190,35 +190,37 @@ async function handleSetup() {
   fs.writeFileSync(mcpSamplePath, '// Condex MCP config for Claude Code\n// Copy the "condex" entry below into your project\'s .mcp.json under "mcpServers"\n' + JSON.stringify(mcpJson, null, 2) + '\n')
   fs.writeFileSync(ocSamplePath, '// Condex MCP config for OpenCode / Dayton\n// Copy the "condex" entry below into your project\'s opencode.json under "mcp"\n' + JSON.stringify(opencodeJson, null, 2) + '\n')
 
-  // --- .mcp.json (Claude Code) ---
+  const GREEN = '\x1b[32m'
+  const YELLOW = '\x1b[33m'
+  const RESET = '\x1b[0m'
+
   const dotMcpPath = path.join(targetPath, '.mcp.json')
+  const opencodePath = path.join(targetPath, 'opencode.json')
   const mcpExisted = fs.existsSync(dotMcpPath)
-  if (!mcpExisted) {
+  const ocExisted = fs.existsSync(opencodePath)
+
+  // --- .mcp.json (Claude Code) ---
+  if (mcpExisted) {
+    console.log(`${YELLOW}⚠  .mcp.json (Claude Code) already exists — not overwritten${RESET}`)
+  } else {
     fs.writeFileSync(dotMcpPath, JSON.stringify(mcpJson, null, 2) + '\n')
-    console.log(`✓ Created: ${dotMcpPath}`)
+    console.log(`${GREEN}✓ .mcp.json (Claude Code) created${RESET}`)
   }
 
   // --- opencode.json (OpenCode / Dayton) ---
-  const opencodePath = path.join(targetPath, 'opencode.json')
-  const ocExisted = fs.existsSync(opencodePath)
-  if (!ocExisted) {
+  if (ocExisted) {
+    console.log(`${YELLOW}⚠  opencode.json (OpenCode / Dayton) already exists — not overwritten${RESET}`)
+  } else {
     fs.writeFileSync(opencodePath, JSON.stringify(opencodeJson, null, 2) + '\n')
-    console.log(`✓ Created: ${opencodePath}`)
+    console.log(`${GREEN}✓ opencode.json (OpenCode / Dayton) created${RESET}`)
   }
 
-  // If either file already existed, show warning + inline snippet
-  const YELLOW = '\x1b[33m'
-  const RESET = '\x1b[0m'
+  // If either file already existed, show snippets for manual copy-paste
   let manualActionNeeded = false
-  let existingSummary = ''
   if (mcpExisted || ocExisted) {
     manualActionNeeded = true
-    const existingParts = [mcpExisted && '.mcp.json (Claude Code)', ocExisted && 'opencode.json (OpenCode / Dayton)'].filter(Boolean)
-    existingSummary = existingParts.join(' and ')
-    const verb = existingParts.length > 1 ? 'already exist' : 'already exists'
     console.log('')
-    console.log(`${YELLOW}⚠  ${existingSummary} ${verb} at ${targetPath} — skipping auto-setup.${RESET}`)
-    console.log(`${YELLOW}   Manual action required: copy the condex snippet below into your project's MCP config.${RESET}`)
+    console.log(`${YELLOW}   Manual action required: copy the condex snippet below into your existing config.${RESET}`)
 
     if (mcpExisted) {
       console.log('')
@@ -302,11 +304,12 @@ async function handleSetup() {
     console.log(`     npm install`)
     console.log(`     npm run download-model --workspace=packages/condex-core`)
   } else if (manualActionNeeded) {
+    const existingParts = [mcpExisted && '.mcp.json (Claude Code)', ocExisted && 'opencode.json (OpenCode / Dayton)'].filter(Boolean)
     console.log(``)
-    console.log(`${YELLOW}⚠  Manual action required — ${existingSummary} not overwritten. Copy the condex snippet above into your project's MCP config.${RESET}`)
+    console.log(`${YELLOW}⚠  ${existingParts.join(' and ')} not overwritten — copy the condex snippet above into your config.${RESET}`)
   } else {
     console.log(``)
-    console.log(`✓ Condex MCP is fully configured with vector search enabled.`)
+    console.log(`${GREEN}✓ Condex MCP is fully configured with vector search enabled.${RESET}`)
   }
 }
 
