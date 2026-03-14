@@ -185,26 +185,48 @@ async function handleSetup() {
 
   // --- .mcp.json (Claude Code) ---
   const dotMcpPath = path.join(targetPath, '.mcp.json')
-  if (fs.existsSync(dotMcpPath)) {
-    const samplePath = path.join(targetPath, 'mcp.sample.jsonc')
-    fs.writeFileSync(samplePath, '// Condex MCP config for Claude Code\n// Copy the "condex" entry below into your .mcp.json under "mcpServers"\n' + JSON.stringify(mcpJson, null, 2) + '\n')
-    console.warn(`⚠  .mcp.json already exists — not overwriting.`)
-    console.warn(`   Copy the condex snippet from: ${samplePath}`)
-  } else {
+  const mcpExisted = fs.existsSync(dotMcpPath)
+  if (!mcpExisted) {
     fs.writeFileSync(dotMcpPath, JSON.stringify(mcpJson, null, 2) + '\n')
     console.log(`✓ Created: ${dotMcpPath}`)
   }
 
   // --- opencode.json (OpenCode / Dayton) ---
   const opencodePath = path.join(targetPath, 'opencode.json')
-  if (fs.existsSync(opencodePath)) {
-    const samplePath = path.join(targetPath, 'opencode.sample.jsonc')
-    fs.writeFileSync(samplePath, '// Condex MCP config for OpenCode / Dayton\n// Copy the "condex" entry below into your opencode.json under "mcp"\n' + JSON.stringify(opencodeJson, null, 2) + '\n')
-    console.warn(`⚠  opencode.json already exists — not overwriting.`)
-    console.warn(`   Copy the condex snippet from: ${samplePath}`)
-  } else {
+  const ocExisted = fs.existsSync(opencodePath)
+  if (!ocExisted) {
     fs.writeFileSync(opencodePath, JSON.stringify(opencodeJson, null, 2) + '\n')
     console.log(`✓ Created: ${opencodePath}`)
+  }
+
+  // Always write sample files (useful as reference even if originals were just created)
+  const mcpSamplePath = path.join(targetPath, 'mcp.sample.jsonc')
+  fs.writeFileSync(mcpSamplePath, '// Condex MCP config for Claude Code\n// Copy the "condex" entry below into your .mcp.json under "mcpServers"\n' + JSON.stringify(mcpJson, null, 2) + '\n')
+
+  const ocSamplePath = path.join(targetPath, 'opencode.sample.jsonc')
+  fs.writeFileSync(ocSamplePath, '// Condex MCP config for OpenCode / Dayton\n// Copy the "condex" entry below into your opencode.json under "mcp"\n' + JSON.stringify(opencodeJson, null, 2) + '\n')
+
+  // If either file already existed, show warning + inline snippet
+  if (mcpExisted || ocExisted) {
+    console.log('')
+    if (mcpExisted) {
+      console.warn(`⚠  .mcp.json already exists — not overwriting.`)
+      console.log(`   Add this under "mcpServers" in your .mcp.json:`)
+      console.log('')
+      const condexEntry = JSON.stringify({ condex: mcpJson.mcpServers.condex }, null, 2)
+      for (const line of condexEntry.split('\n')) console.log(`   ${line}`)
+      console.log('')
+      console.log(`   Also saved to: ${mcpSamplePath}`)
+    }
+    if (ocExisted) {
+      console.warn(`⚠  opencode.json already exists — not overwriting.`)
+      console.log(`   Add this under "mcp" in your opencode.json:`)
+      console.log('')
+      const condexEntry = JSON.stringify({ condex: opencodeJson.mcp.condex }, null, 2)
+      for (const line of condexEntry.split('\n')) console.log(`   ${line}`)
+      console.log('')
+      console.log(`   Also saved to: ${ocSamplePath}`)
+    }
   }
 
   // Check vector readiness
