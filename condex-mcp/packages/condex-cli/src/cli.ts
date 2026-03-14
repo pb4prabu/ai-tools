@@ -149,6 +149,10 @@ async function handleSetup() {
       condex: {
         command: 'node',
         args: [serverPath],
+        env: {
+          CONDEX_BM25_MIN_SCORE: '0.3',
+          CONDEX_VECTOR_MAX_DISTANCE: '0.95',
+        },
       },
     },
   }
@@ -178,6 +182,10 @@ async function handleSetup() {
         nonCondex.condex = {
           type: 'local',
           command: ['node', serverPath],
+          environment: {
+            CONDEX_BM25_MIN_SCORE: '0.3',
+            CONDEX_VECTOR_MAX_DISTANCE: '0.95',
+          },
           enabled: true,
         }
         existing.mcp = nonCondex

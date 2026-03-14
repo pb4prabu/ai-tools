@@ -66,6 +66,7 @@ This is a monorepo with three packages:
 |---------|---------|-----------------|
 | **@condex-ai/core** | MCP server, retrieval, storage, security | `@modelcontextprotocol/sdk`, `better-sqlite3`, `sqlite-vec`, `@huggingface/transformers` |
 | **@condex-ai/java** | Spring-aware Java parser with architecture detection | `tree-sitter`, `tree-sitter-java`, `js-yaml` |
+| **@condex-ai/multi-lang** | Tree-sitter parsers for 20 languages | `tree-sitter`, `tree-sitter-python`, `tree-sitter-typescript`, etc. |
 | **@condex-ai/cli** | CLI for manual indexing and management | `@condex-ai/core`, `@condex-ai/java` |
 
 ---
@@ -431,8 +432,8 @@ Cumulative savings persisted in `.condex/savings.json`.
 
 | Variable | Values | Default | Purpose |
 |----------|--------|---------|---------|
-| `CONDEX_SEARCH_MODE` | `bm25` / `vector` / `hybrid` / `smart` | `bm25` | Search algorithm |
-| `CONDEX_MODEL_CACHE_DIR` | Absolute path | `.condex/models/` (inside project root) | Override embedding model cache location |
+| `CONDEX_SEARCH_MODE` | `bm25` / `vector` / `hybrid` / `smart` | `vector` | Search algorithm. Vector is default; falls back to BM25 if sqlite-vec or embedder unavailable |
+| `CONDEX_MODEL_CACHE_DIR` | Absolute path | `~/.condex/models/` | Override embedding model cache location |
 | `CONDEX_BM25_MIN_SCORE` | Float | `0.3` | Minimum BM25 score threshold |
 | `CONDEX_VECTOR_MAX_DISTANCE` | Float | `0.95` | Maximum vector distance threshold |
 | `CONDEX_SMART_BM25_MIN_SCORE` | Float | `0.5` | Stricter BM25 threshold for smart mode |
@@ -455,6 +456,16 @@ Cumulative savings persisted in `.condex/savings.json`.
 }
 ```
 
+### Quick Setup (Recommended)
+
+Run `condex setup` in your project root to auto-generate config files:
+
+```bash
+npx condex setup .
+```
+
+This generates `mcp.json` and `.mcp.json` with a single `condex` entry, updates any existing `opencode.json`, and checks vector readiness.
+
 ### OpenCode Integration
 
 `opencode.json` (in project root):
@@ -463,29 +474,14 @@ Cumulative savings persisted in `.condex/savings.json`.
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "condex-bm25": {
+    "condex": {
       "type": "local",
       "command": ["node", "/path/to/condex-mcp/packages/condex-core/dist/server.js"],
-      "environment": { "CONDEX_SEARCH_MODE": "bm25" },
+      "environment": {
+        "CONDEX_BM25_MIN_SCORE": "0.3",
+        "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
+      },
       "enabled": true
-    },
-    "condex-vector": {
-      "type": "local",
-      "command": ["node", "/path/to/condex-mcp/packages/condex-core/dist/server.js"],
-      "environment": {
-        "CONDEX_SEARCH_MODE": "vector",
-        "CONDEX_MODEL_CACHE_DIR": "/path/to/models"
-      },
-      "enabled": false
-    },
-    "condex-smart": {
-      "type": "local",
-      "command": ["node", "/path/to/condex-mcp/packages/condex-core/dist/server.js"],
-      "environment": {
-        "CONDEX_SEARCH_MODE": "smart",
-        "CONDEX_MODEL_CACHE_DIR": "/path/to/models"
-      },
-      "enabled": false
     }
   }
 }
@@ -493,36 +489,24 @@ Cumulative savings persisted in `.condex/savings.json`.
 
 ### Claude Code Integration
 
-In `~/.claude.json` under `projects.<path>.mcpServers`:
+`.mcp.json` (in project root) or `~/.claude.json`:
 
 ```json
 {
-  "condex-mcp": {
-    "type": "stdio",
-    "command": "node",
-    "args": ["/path/to/condex-mcp/packages/condex-core/dist/server.js"],
-    "env": {
-      "CONDEX_SEARCH_MODE": "bm25"
+  "mcpServers": {
+    "condex": {
+      "command": "node",
+      "args": ["/path/to/condex-mcp/packages/condex-core/dist/server.js"],
+      "env": {
+        "CONDEX_BM25_MIN_SCORE": "0.3",
+        "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
+      }
     }
   }
 }
 ```
 
-For vector/smart modes with a custom model path:
-
-```json
-{
-  "condex-mcp": {
-    "type": "stdio",
-    "command": "node",
-    "args": ["/path/to/condex-mcp/packages/condex-core/dist/server.js"],
-    "env": {
-      "CONDEX_SEARCH_MODE": "smart",
-      "CONDEX_MODEL_CACHE_DIR": "/path/to/models"
-    }
-  }
-}
-```
+> **Note**: There is only one `condex` MCP — no mode selection needed. Vector search is the default. If vector dependencies (sqlite-vec, embedder) are unavailable, it automatically falls back to BM25.
 
 ### Index Directory Structure
 
@@ -657,10 +641,11 @@ The server:
 - No incremental vector updates — full rebuild on re-index
 
 ### Language Support
-- **Java**: Full support (tree-sitter parser, Spring/Hex detection)
-- **TypeScript/Python**: Planned, not yet implemented
-- **SQL**: Schema extraction from migrations only
-- **YAML**: Configuration extraction only
+- **Java**: Full support (tree-sitter parser, Spring/Hex architecture detection)
+- **20 languages via tree-sitter** (`@condex-ai/multi-lang`): Python, TypeScript, JavaScript, JSX, TSX, Go, Rust, Kotlin, C, C++, C#, Ruby, PHP, Swift, Scala, Lua, Zig, Elixir, Haskell, Dart
+- **SQL**: Schema extraction from migration files
+- **YAML**: Configuration property extraction
+- Composite parser routes `.java` to Java parser (with Spring/Hex detection), all other supported extensions to multi-lang tree-sitter, unknown files to generic fallback
 
 ---
 
