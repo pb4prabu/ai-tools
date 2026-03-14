@@ -42,18 +42,22 @@ Behind a proxy: `HTTPS_PROXY=http://proxy:port npm run setup`
 
 ### Add to Your Project
 
-**Option A** — auto-generate config:
+**Option A** — auto-create config files:
 
 ```bash
 npx condex setup /path/to/your/project
 ```
 
-**Option B** — copy config from setup script output:
+This creates `.mcp.json` (Claude Code) and `opencode.json` (OpenCode / Dayton) in your project. If either file already exists, it won't be overwritten — the command prints the condex snippet for you to manually copy into your existing config.
 
-`condex-setup.sh` prints ready-to-use MCP configs at the end of setup (with the correct server path filled in). Copy the relevant snippet into your project:
+**Option B** — copy the sample files:
 
-- **Claude Code** → paste into `.mcp.json` in your project root
-- **OpenCode / Dayton** → paste into `opencode.json` in your project root
+`npm run setup` generates sample config files in the condex-mcp root:
+
+- `mcp.sample.jsonc` → copy as `.mcp.json` to your project root (Claude Code)
+- `opencode.sample.jsonc` → copy as `opencode.json` to your project root (OpenCode / Dayton)
+
+> **Note:** Remove the `//` comments after copying — plain JSON does not support comments and will fail to parse.
 
 **Option C** — manually create the config:
 
@@ -94,7 +98,7 @@ npx condex setup /path/to/your/project
 }
 ```
 
-> Replace `/absolute/path/to/condex-mcp` with the actual path. Both `condex-setup.sh` and `npx condex setup` print the exact path.
+> Replace `/absolute/path/to/condex-mcp` with the actual path printed by `npm run setup` or `npx condex setup`.
 
 ### Model Cache
 
@@ -103,7 +107,7 @@ The embedding model (`nomic-ai/nomic-embed-text-v1.5`, 768 dimensions, ONNX q8) 
 ### CLI Commands
 
 ```bash
-npx condex setup [path]           # Generate MCP config files
+npx condex setup [path]           # Create .mcp.json + opencode.json (warns if exists)
 npx condex index [path]           # Index a project (incremental)
 npx condex index [path] --full    # Force full re-index
 npx condex status [path]          # Show index status
