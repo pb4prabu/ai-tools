@@ -206,18 +206,18 @@ async function handleSetup() {
     console.log(`✓ Created: ${opencodePath}`)
   }
 
-  // ANSI colors for terminal output
+  // If either file already existed, show warning + inline snippet
   const YELLOW = '\x1b[33m'
   const RESET = '\x1b[0m'
-
-  // If either file already existed, show warning + inline snippet
   let manualActionNeeded = false
+  let existingSummary = ''
   if (mcpExisted || ocExisted) {
     manualActionNeeded = true
-    const existingFiles = [mcpExisted && '.mcp.json', ocExisted && 'opencode.json'].filter(Boolean)
-    const verb = existingFiles.length > 1 ? 'already exist' : 'already exists'
+    const existingParts = [mcpExisted && '.mcp.json (Claude Code)', ocExisted && 'opencode.json (OpenCode / Dayton)'].filter(Boolean)
+    existingSummary = existingParts.join(' and ')
+    const verb = existingParts.length > 1 ? 'already exist' : 'already exists'
     console.log('')
-    console.log(`${YELLOW}⚠  ${existingFiles.join(' and ')} ${verb} at ${targetPath} — skipping auto-setup.${RESET}`)
+    console.log(`${YELLOW}⚠  ${existingSummary} ${verb} at ${targetPath} — skipping auto-setup.${RESET}`)
     console.log(`${YELLOW}   Manual action required: copy the condex snippet below into your project's MCP config.${RESET}`)
 
     if (mcpExisted) {
@@ -303,7 +303,7 @@ async function handleSetup() {
     console.log(`     npm run download-model --workspace=packages/condex-core`)
   } else if (manualActionNeeded) {
     console.log(``)
-    console.log(`⚠  Manual action required — copy the condex snippet above into your project's MCP config file.`)
+    console.log(`${YELLOW}⚠  Manual action required — ${existingSummary} not overwritten. Copy the condex snippet above into your project's MCP config.${RESET}`)
   } else {
     console.log(``)
     console.log(`✓ Condex MCP is fully configured with vector search enabled.`)
