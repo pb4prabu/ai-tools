@@ -304,12 +304,21 @@ async function handleSetup() {
     console.log(`     npm install`)
     console.log(`     npm run download-model --workspace=packages/condex-core`)
   } else if (manualActionNeeded) {
-    const existingParts = [mcpExisted && '.mcp.json (Claude Code)', ocExisted && 'opencode.json (OpenCode / Dayton)'].filter(Boolean)
     console.log(``)
-    console.log(`${YELLOW}⚠  ${existingParts.join(' and ')} not overwritten — copy the condex snippet above into your config.${RESET}`)
   } else {
     console.log(``)
-    console.log(`${GREEN}✓ Condex MCP is fully configured with vector search enabled.${RESET}`)
+  }
+
+  // Final per-file status summary (always show two lines)
+  if (mcpExisted) {
+    console.log(`${YELLOW}⚠  .mcp.json (Claude Code) — not overwritten, see warning above${RESET}`)
+  } else {
+    console.log(`${GREEN}✓  .mcp.json (Claude Code) — setup complete${RESET}`)
+  }
+  if (ocExisted) {
+    console.log(`${YELLOW}⚠  opencode.json (OpenCode / Dayton) — not overwritten, see warning above${RESET}`)
+  } else {
+    console.log(`${GREEN}✓  opencode.json (OpenCode / Dayton) — setup complete${RESET}`)
   }
 }
 
