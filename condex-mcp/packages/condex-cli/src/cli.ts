@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
@@ -23,6 +24,8 @@ async function main() {
       return handleStatus()
     case 'invalidate':
       return handleInvalidate()
+    case 'setup':
+      return handleSetup()
     case 'help':
     case '--help':
     case '-h':
@@ -121,11 +124,81 @@ async function handleInvalidate() {
   }
 }
 
+async function handleSetup() {
+  const targetPath = args[1] ? path.resolve(args[1]) : process.cwd()
+
+  // Resolve condex-mcp server path
+  const esmRequire = createRequire(import.meta.url)
+  let serverPath: string
+  try {
+    serverPath = esmRequire.resolve('@condex-ai/core/server')
+  } catch {
+    // Fallback: try to find it relative to cli package
+    const fallback = path.resolve(path.dirname(import.meta.url.replace('file://', '')), '../../condex-core/dist/server.js')
+    if (fs.existsSync(fallback)) {
+      serverPath = fallback
+    } else {
+      console.error('Could not find @condex-ai/core server. Make sure it is built.')
+      process.exit(1)
+    }
+  }
+
+  // Generate mcp.json (Claude Code / generic MCP format)
+  const mcpConfig = {
+    mcpServers: {
+      condex: {
+        command: 'node',
+        args: [serverPath],
+      },
+    },
+  }
+
+  const mcpPath = path.join(targetPath, 'mcp.json')
+  fs.writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + '\n')
+  console.log(`Created: ${mcpPath}`)
+
+  // Also generate .mcp.json (Claude Code project-level config)
+  const dotMcpPath = path.join(targetPath, '.mcp.json')
+  fs.writeFileSync(dotMcpPath, JSON.stringify(mcpConfig, null, 2) + '\n')
+  console.log(`Created: ${dotMcpPath}`)
+
+  // Clean up old opencode.json if it has condex entries
+  const opencodePath = path.join(targetPath, 'opencode.json')
+  if (fs.existsSync(opencodePath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(opencodePath, 'utf8'))
+      // Replace all condex-* entries with a single condex entry
+      if (existing.mcp) {
+        const nonCondex: Record<string, any> = {}
+        for (const [key, val] of Object.entries(existing.mcp)) {
+          if (!key.startsWith('condex')) {
+            nonCondex[key] = val
+          }
+        }
+        nonCondex.condex = {
+          type: 'local',
+          command: ['node', serverPath],
+          enabled: true,
+        }
+        existing.mcp = nonCondex
+        fs.writeFileSync(opencodePath, JSON.stringify(existing, null, 2) + '\n')
+        console.log(`Updated: ${opencodePath} (replaced condex-bm25/vector/hybrid/smart with single condex)`)
+      }
+    } catch {
+      // opencode.json exists but isn't valid JSON — skip
+    }
+  }
+
+  console.log(`\nCondex MCP configured. No mode selection needed — smart mode is the default.`)
+  console.log(`Server: ${serverPath}`)
+}
+
 function printHelp() {
   console.log(`
 Condex CLI — Local-first code index for AI agents
 
 Usage:
+  condex setup [path]          Generate mcp.json for a project (unified, no mode selection)
   condex index [path]          Index a project (default: current directory)
   condex index [path] --full   Force full re-index
   condex status [path]         Show index status
@@ -133,10 +206,10 @@ Usage:
   condex help                  Show this help
 
 Examples:
+  condex setup .               Generate mcp.json in current directory
+  condex setup ~/my-project    Generate mcp.json in a specific project
   condex index .               Index current directory
-  condex index ~/my-project    Index a specific project
   condex status                Show status of current directory
-  condex invalidate            Clear index for current directory
 `.trim())
 }
 
