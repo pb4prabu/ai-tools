@@ -11,7 +11,8 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; }
@@ -101,7 +102,6 @@ echo "========================================="
 echo "  Verifying setup..."
 echo "========================================="
 
-# Quick check: can we load sqlite-vec?
 cd "$SCRIPT_DIR"
 node -e "
 const Database = require('better-sqlite3');
@@ -119,72 +119,58 @@ else
   exit 1
 fi
 
-# ── Generate opencode.json sample ─────────────────
-SAMPLE_CONFIG="$SCRIPT_DIR/opencode.sample.json"
-cat > "$SAMPLE_CONFIG" <<JSONEOF
-{
-  "\$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "condex-bm25": {
-      "type": "local",
-      "command": ["node", "$SERVER_JS"],
-      "environment": { "CONDEX_SEARCH_MODE": "bm25" },
-      "enabled": true
-    },
-    "condex-vector": {
-      "type": "local",
-      "command": ["node", "$SERVER_JS"],
-      "environment": { "CONDEX_SEARCH_MODE": "vector" },
-      "enabled": true
-    },
-    "condex-hybrid": {
-      "type": "local",
-      "command": ["node", "$SERVER_JS"],
-      "environment": { "CONDEX_SEARCH_MODE": "hybrid" },
-      "enabled": false
-    },
-    "condex-smart": {
-      "type": "local",
-      "command": ["node", "$SERVER_JS"],
-      "environment": { "CONDEX_SEARCH_MODE": "smart" },
-      "enabled": true
-    }
-  },
-  "instructions": [
-    "This project has Condex MCP configured for token-efficient code navigation.",
-    "PREFER Condex MCP tools over reading raw files:",
-    "- Use search_symbols to find classes, methods, interfaces by name or description",
-    "- Use get_project_outline to understand project structure and packages",
-    "- Use get_file_outline to see symbols in a file before reading the whole file",
-    "- Use get_symbol to read specific method/class source code (not entire files)",
-    "- Use get_context_for_task to get relevant code context for a coding task",
-    "- Use search_schema to find database tables and columns",
-    "- Use index_folder --full after major code changes to re-index"
-  ]
-}
-JSONEOF
-ok "Generated opencode.sample.json"
-
+# ── Done ──────────────────────────────────────────
 echo ""
 echo "========================================="
 echo -e "  ${GREEN}Setup complete!${NC}"
 echo "========================================="
 echo ""
-echo "  Model cache: $MODEL_SUBDIR"
-echo "  Server:      $SERVER_JS"
-echo ""
-echo "  Quick test:"
-echo "    cd $SCRIPT_DIR && npx tsx test-diagnose.ts"
+echo "  Model cache:  $MODEL_DIR"
+echo "  Server path:  $SERVER_JS"
 echo ""
 echo "========================================="
-echo "  MCP Configuration"
+echo "  Next: Add Condex to your project"
 echo "========================================="
 echo ""
-echo "  A sample config has been generated at:"
-echo "    $SAMPLE_CONFIG"
+echo "  Option 1: Run condex setup in your project:"
+echo "    ${CYAN}npx condex setup /path/to/your/project${NC}"
 echo ""
-echo "  To use Condex in your project, copy it:"
-echo "    cp $SAMPLE_CONFIG /path/to/your/project/opencode.json"
+echo "  Option 2: Manually copy the config below"
 echo ""
-echo "  Or merge the \"mcp\" block into your existing opencode.json."
+echo -e "  ${YELLOW}Claude Code${NC} — paste into .mcp.json in your project root:"
+echo ""
+cat <<MCPEOF
+  {
+    "mcpServers": {
+      "condex": {
+        "command": "node",
+        "args": ["$SERVER_JS"],
+        "env": {
+          "CONDEX_SEARCH_MODE": "vector,bm25",
+          "CONDEX_BM25_MIN_SCORE": "0.3",
+          "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
+        }
+      }
+    }
+  }
+MCPEOF
+echo ""
+echo -e "  ${YELLOW}OpenCode${NC} — paste into opencode.json in your project root:"
+echo ""
+cat <<OCEOF
+  {
+    "mcp": {
+      "condex": {
+        "type": "local",
+        "command": ["node", "$SERVER_JS"],
+        "environment": {
+          "CONDEX_SEARCH_MODE": "vector,bm25",
+          "CONDEX_BM25_MIN_SCORE": "0.3",
+          "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
+        },
+        "enabled": true
+      }
+    }
+  }
+OCEOF
 echo ""
