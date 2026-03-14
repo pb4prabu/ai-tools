@@ -334,8 +334,29 @@ async function findSourceFiles(
     java: ['**/*.java', '**/*.kt', '**/*.kts'],
     typescript: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     python: ['**/*.py'],
+    all: [
+      '**/*.java', '**/*.kt', '**/*.kts',
+      '**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs', '**/*.mts', '**/*.cts',
+      '**/*.py',
+      '**/*.go',
+      '**/*.rs',
+      '**/*.c', '**/*.h',
+      '**/*.cpp', '**/*.cc', '**/*.cxx', '**/*.hpp', '**/*.hxx', '**/*.hh',
+      '**/*.rb', '**/*.rake', '**/*.gemspec',
+      '**/*.cs',
+      '**/*.sh', '**/*.bash', '**/*.zsh',
+      '**/*.swift',
+      '**/*.php',
+      '**/*.scala', '**/*.sc',
+      '**/*.lua',
+      '**/*.hs', '**/*.lhs',
+      '**/*.ex', '**/*.exs',
+      '**/*.r', '**/*.R',
+      '**/*.ml', '**/*.mli',
+      '**/*.zig',
+    ],
   }
-  const include = config.include ?? extensionMap[language] ?? extensionMap.java
+  const include = config.include ?? extensionMap[language] ?? extensionMap.all
   const exclude = config.exclude ?? DEFAULT_CONFIG.exclude
   const allExclude = [...new Set([...exclude, '**/.condex/**'])]
 

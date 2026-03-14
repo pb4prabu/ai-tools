@@ -2,7 +2,7 @@
 
 // Block outbound network unless vector/hybrid mode needs model download
 import { blockOutboundNetwork } from './security/network-guard.js'
-const searchMode = process.env.CONDEX_SEARCH_MODE ?? 'bm25'
+const searchMode = process.env.CONDEX_SEARCH_MODE ?? 'smart'
 if (searchMode === 'bm25') {
   blockOutboundNetwork()
 } else {
@@ -36,7 +36,7 @@ import { writeErrorLog, writeIndexStatus, initCondexDir, type IndexStatus } from
 
 const PROJECT_ROOT = path.resolve(process.cwd())
 const TOOL_VERSION = '1.0.0'
-const SEARCH_MODE = (process.env.CONDEX_SEARCH_MODE ?? 'bm25') as SearchMode
+const SEARCH_MODE = (process.env.CONDEX_SEARCH_MODE ?? 'smart') as SearchMode
 
 // Configurable thresholds via env vars
 const BM25_MIN_SCORE = parseFloat(process.env.CONDEX_BM25_MIN_SCORE ?? '0.3')
@@ -69,6 +69,64 @@ function loadJavaParser(): {
   }
 }
 
+/**
+ * Try to load the multi-language tree-sitter parser. Returns null if not installed.
+ */
+function loadMultiLangParser(): {
+  parseMultiLangFile: (content: string, opts: { projectId: string; filePath: string }) => import('./types/symbol.js').Symbol[] | null
+  detectLanguageFromExt: (filePath: string) => string | null
+  getSupportedLanguages: () => string[]
+  EXTENSION_MAP: Record<string, string>
+} | null {
+  try {
+    const esmRequire = createRequire(import.meta.url)
+    const multiLangPkg = esmRequire('@condex-ai/multi-lang')
+    return {
+      parseMultiLangFile: multiLangPkg.parseMultiLangFile,
+      detectLanguageFromExt: multiLangPkg.detectLanguageFromExt,
+      getSupportedLanguages: multiLangPkg.getSupportedLanguages,
+      EXTENSION_MAP: multiLangPkg.EXTENSION_MAP,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Java file extensions handled by the Java parser */
+const JAVA_EXTENSIONS = new Set(['.java'])
+
+/**
+ * Create a composite parser that routes .java to Java parser
+ * and all other supported extensions to multi-lang tree-sitter parser.
+ * Falls through to generic file parser (in indexer.ts) if neither handles the file.
+ */
+function createCompositeParser(
+  javaParsers: ReturnType<typeof loadJavaParser>,
+  multiLangParser: ReturnType<typeof loadMultiLangParser>
+): ParseFileWithRefsFn | undefined {
+  if (!javaParsers && !multiLangParser) return undefined
+
+  return (content: string, opts: { projectId: string; filePath: string; profile?: any }) => {
+    const ext = path.extname(opts.filePath).toLowerCase()
+
+    // Route .java files to the Java parser (fine-grained: classes, methods, fields, annotations)
+    if (JAVA_EXTENSIONS.has(ext) && javaParsers) {
+      return javaParsers.parseFileWithRefs(content, opts)
+    }
+
+    // Route other supported files to multi-lang tree-sitter parser
+    if (multiLangParser) {
+      const symbols = multiLangParser.parseMultiLangFile(content, opts)
+      if (symbols && symbols.length > 0) {
+        return { symbols, refs: [] }
+      }
+    }
+
+    // Return empty — indexer.ts will fall through to generic file parser
+    return { symbols: [], refs: [] }
+  }
+}
+
 async function main() {
   console.error(`[condex] Starting Condex MCP Server`)
   console.error(`[condex] Project root: ${PROJECT_ROOT}`)
@@ -91,6 +149,15 @@ async function main() {
   if (javaParsers) {
     console.error(`[condex] Java parser loaded`)
   }
+
+  const multiLangParser = loadMultiLangParser()
+  if (multiLangParser) {
+    const supported = multiLangParser.getSupportedLanguages()
+    console.error(`[condex] Multi-lang parser loaded (${supported.length} languages: ${supported.join(', ')})`)
+  }
+
+  // Create composite parser: Java → Java parser, others → multi-lang, fallback → generic
+  const compositeParser = createCompositeParser(javaParsers, multiLangParser)
 
   // Auto-index on startup
   let architecture: string | null = null
@@ -117,15 +184,15 @@ async function main() {
         )
       }
       indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
-    } else if (javaParsers) {
+    } else if (compositeParser) {
       // No index: run full index
       console.error(`[condex] No existing index. Running full index...`)
       const result = await indexProject(db, safeFs, {
         full: true,
-        parseFileWithRefs: javaParsers.parseFileWithRefs,
-        detectArch: javaParsers.detectArch,
-        parseSql: javaParsers.parseSql,
-        parseYaml: javaParsers.parseYaml,
+        parseFileWithRefs: compositeParser,
+        detectArch: javaParsers?.detectArch,
+        parseSql: javaParsers?.parseSql,
+        parseYaml: javaParsers?.parseYaml,
       })
       architecture = result.architecture
       bm25SymbolCount = result.symbolCount
@@ -135,7 +202,7 @@ async function main() {
       )
       indexStatus.bm25 = { status: 'success', symbolCount: bm25SymbolCount, timestamp: new Date().toISOString() }
     } else {
-      console.error(`[condex] No parser available and no existing index.`)
+      console.error(`[condex] No parser available and no existing index. Install @condex-ai/java or @condex-ai/multi-lang.`)
       indexStatus.bm25 = { status: 'skipped', error: 'No parser available', timestamp: new Date().toISOString() }
     }
   } catch (err: any) {
@@ -152,46 +219,60 @@ async function main() {
     } catch { /* best effort */ }
   }
 
-  // Initialize embedder for vector/hybrid modes
+  // Initialize embedder — smart mode gracefully degrades, other modes require it
   console.error(`[condex] Search mode: ${SEARCH_MODE}`)
   let embedder: Embedder | null = null
+  let vecReady = false
 
   if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid' || SEARCH_MODE === 'smart') {
-    // Step 1: Load sqlite-vec extension — MUST succeed for vector modes
+    // Step 1: Load sqlite-vec extension
     console.error(`[condex] [1/3] Loading sqlite-vec extension...`)
     try {
       loadVec(db)
       console.error(`[condex] [1/3] sqlite-vec loaded, symbol_vectors table ready`)
+      vecReady = true
     } catch (err: any) {
-      console.error(`[condex] FATAL: sqlite-vec failed to load: ${err.message}`)
-      console.error(err.stack)
-      console.error(`[condex] Fix: run "npm install" to get sqlite-vec native binary for your platform, or use CONDEX_SEARCH_MODE=bm25`)
-      indexStatus.vector = { status: 'failed', error: `sqlite-vec load failed: ${err.message}`, timestamp: new Date().toISOString() }
-      indexStatus.lastUpdated = new Date().toISOString()
-      try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
-      process.exit(1)
+      console.error(`[condex] sqlite-vec failed to load: ${err.message}`)
+      if (SEARCH_MODE === 'smart') {
+        console.error(`[condex] Degrading to BM25-only (vector unavailable)`)
+        indexStatus.vector = { status: 'failed', error: `sqlite-vec load failed: ${err.message}`, timestamp: new Date().toISOString() }
+      } else {
+        console.error(`[condex] FATAL: sqlite-vec required for ${SEARCH_MODE} mode`)
+        indexStatus.vector = { status: 'failed', error: `sqlite-vec load failed: ${err.message}`, timestamp: new Date().toISOString() }
+        indexStatus.lastUpdated = new Date().toISOString()
+        try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
+        process.exit(1)
+      }
     }
 
-    // Step 2: Load embedding model — MUST succeed for vector modes
-    console.error(`[condex] [2/3] Loading embedding model...`)
-    try {
-      const { getEmbedder: getEmbed, ensureModelDownloaded, getCacheDir } = await import('./embeddings/local-embed.js')
-      const modelCacheDir = getCacheDir()
-      console.error(`[condex] Model cache directory: ${modelCacheDir}`)
-      await ensureModelDownloaded()
-      embedder = await getEmbed()
-      console.error(`[condex] [2/3] Embedder ready (${embedder.dimensions} dimensions)`)
-    } catch (err: any) {
-      console.error(`[condex] FATAL: Embedding model failed to load: ${err.message}`)
-      console.error(err.stack)
-      console.error(`[condex] Fix: run "npm run download-model --workspace=packages/condex-core" or use CONDEX_SEARCH_MODE=bm25`)
-      indexStatus.vector = { status: 'failed', error: `Embedding model failed: ${err.message}`, timestamp: new Date().toISOString() }
-      indexStatus.lastUpdated = new Date().toISOString()
-      try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
-      process.exit(1)
+    // Step 2: Load embedding model (skip if step 1 failed)
+    if (vecReady) {
+      console.error(`[condex] [2/3] Loading embedding model...`)
+      try {
+        const { getEmbedder: getEmbed, ensureModelDownloaded, getCacheDir } = await import('./embeddings/local-embed.js')
+        const modelCacheDir = getCacheDir()
+        console.error(`[condex] Model cache directory: ${modelCacheDir}`)
+        await ensureModelDownloaded()
+        embedder = await getEmbed()
+        console.error(`[condex] [2/3] Embedder ready (${embedder.dimensions} dimensions)`)
+      } catch (err: any) {
+        console.error(`[condex] Embedding model failed to load: ${err.message}`)
+        vecReady = false
+        if (SEARCH_MODE === 'smart') {
+          console.error(`[condex] Degrading to BM25-only (embedder unavailable)`)
+          indexStatus.vector = { status: 'failed', error: `Embedding model failed: ${err.message}`, timestamp: new Date().toISOString() }
+        } else {
+          console.error(`[condex] FATAL: Embedder required for ${SEARCH_MODE} mode`)
+          indexStatus.vector = { status: 'failed', error: `Embedding model failed: ${err.message}`, timestamp: new Date().toISOString() }
+          indexStatus.lastUpdated = new Date().toISOString()
+          try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
+          process.exit(1)
+        }
+      }
     }
 
-    // Step 3: Build vector index for existing symbols
+    // Step 3: Build vector index for existing symbols (skip if step 1 or 2 failed)
+    if (vecReady && embedder) {
     console.error(`[condex] [3/3] Building vector index...`)
     try {
       const { prepareSymbolText } = await import('./embeddings/local-embed.js')
@@ -237,6 +318,7 @@ async function main() {
         })
       } catch { /* best effort */ }
     }
+    } // end if (vecReady && embedder)
   } else {
     indexStatus.vector = { status: 'skipped', error: `Search mode is ${SEARCH_MODE} — vector not needed`, timestamp: new Date().toISOString() }
   }
@@ -253,7 +335,7 @@ async function main() {
 
   // Initialize incremental reindexer for query-time change detection
   let reindexer: IncrementalReindexer | null = null
-  if (javaParsers) {
+  if (compositeParser) {
     let prepareSymbolTextFn: ((s: { qualifiedName: string; signature: string; javadoc?: string | null; kind?: string }) => string) | undefined
     if (embedder) {
       const { prepareSymbolText } = await import('./embeddings/local-embed.js')
@@ -264,7 +346,7 @@ async function main() {
       db,
       projectRoot: PROJECT_ROOT,
       projectId: namespace,
-      parseFileWithRefs: javaParsers.parseFileWithRefs,
+      parseFileWithRefs: compositeParser,
       embedder,
       prepareSymbolText: prepareSymbolTextFn,
     })

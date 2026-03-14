@@ -7,6 +7,11 @@ export type SymbolKind =
   | 'constructor'
   | 'enum'
   | 'annotation_type'
+  | 'function'
+  | 'module'
+  | 'struct'
+  | 'trait'
+  | 'type_alias'
   | 'file'
 
 export type SpringRole =

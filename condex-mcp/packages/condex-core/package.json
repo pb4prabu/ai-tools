@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "exports": {
     ".": "./dist/index.js",
-    "./server": "./dist/server.js"
+    "./server": "./dist/server.js",
+    "./types/symbol.js": "./dist/types/symbol.js"
   },
   "bin": {
     "condex-mcp": "dist/server.js"
@@ -25,6 +26,9 @@
     "glob": "^11.0.0",
     "js-tiktoken": "^1.0.0",
     "sqlite-vec": "^0.1.7-alpha.2"
+  },
+  "optionalDependencies": {
+    "@condex-ai/multi-lang": "*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0"

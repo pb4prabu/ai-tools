@@ -1,0 +1,35 @@
+{
+  "name": "@condex-ai/multi-lang",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@condex-ai/core": "*",
+    "tree-sitter": "^0.22.4",
+    "tree-sitter-python": "^0.23.6",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-typescript": "^0.23.2",
+    "tree-sitter-go": "^0.23.4",
+    "tree-sitter-rust": "^0.23.2",
+    "tree-sitter-c": "^0.23.4",
+    "tree-sitter-cpp": "^0.23.4",
+    "tree-sitter-ruby": "^0.23.1",
+    "tree-sitter-c-sharp": "^0.23.1",
+    "tree-sitter-bash": "^0.23.3"
+  },
+  "optionalDependencies": {
+    "tree-sitter-kotlin": "^0.3.8",
+    "tree-sitter-swift": "*",
+    "tree-sitter-php": "*",
+    "tree-sitter-scala": "*",
+    "tree-sitter-lua": "*",
+    "tree-sitter-haskell": "*",
+    "tree-sitter-elixir": "*",
+    "tree-sitter-r": "*",
+    "tree-sitter-ocaml": "*",
+    "tree-sitter-zig": "*"
+  }
+}

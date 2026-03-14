@@ -4,6 +4,7 @@
   "workspaces": [
     "packages/condex-core",
     "packages/condex-java",
+    "packages/condex-multi-lang",
     "packages/condex-cli"
   ],
   "scripts": {
