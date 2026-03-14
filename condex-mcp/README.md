@@ -327,8 +327,9 @@ Language auto-detection: `pom.xml`/`build.gradle` → Java, `tsconfig.json` → 
 
 ```
 AI Agent (Claude Code, OpenCode / Dayton, etc.)
-    │
-    ▼  MCP (stdio JSON-RPC)
+                  │
+                  ▼  
+          MCP (stdio JSON-RPC)
 ┌──────────────────────────────────────────┐
 │  Condex MCP Server                       │
 │  ┌────────────┐  ┌────────────────────┐  │
@@ -345,8 +346,9 @@ AI Agent (Claude Code, OpenCode / Dayton, etc.)
 │  │ (sandbox)  │  │ (3-layer block)    │  │
 │  └────────────┘  └────────────────────┘  │
 └──────────────────────────────────────────┘
-    │
-    ▼  File system (read-only to source, write to .condex/)
+                    │
+                    ▼  
+File system (read-only to source, write to .condex/)
 ┌──────────────────────────────────────────┐
 │  Your Codebase + .condex/                │
 └──────────────────────────────────────────┘
@@ -410,6 +412,8 @@ npx tsx benchmark/generate-sample.ts && npx tsx benchmark/bench.ts --vector  # B
 | Hybrid (RRF) | 42,436 | 47.3% |
 | Search Chain (`vector,bm25`) | 14,439 | **82.1%** |
 
+> **Note:** These results are from preliminary analysis on a single codebase and should be treated as a starting point, not a definitive claim. Real-world benefits will become clearer as more projects adopt Condex. In particular, context drift (whether symbol-level retrieval consistently gives agents the *right* context vs. full-file reads) has not been validated at scale yet. We're sharing these early numbers for feedback — if you have observations or results to share, please open an issue.
+
 ---
 
 ## Known Limitations
@@ -421,8 +425,3 @@ npx tsx benchmark/generate-sample.ts && npx tsx benchmark/bench.ts --vector  # B
 - **Generic files**: File-level indexing only (no symbol granularity for unknown formats)
 - **Concurrency**: Lock file prevents simultaneous indexing; single-agent use is the typical MCP pattern
 
----
-
-## License
-
-Private — all rights reserved.
