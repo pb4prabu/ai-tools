@@ -46,7 +46,3 @@ export function buildMeta(opts: {
   }
 }
 
-/**
- * Count tokens accurately using js-tiktoken.
- */
-export { countTokens }

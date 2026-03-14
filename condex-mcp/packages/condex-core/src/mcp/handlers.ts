@@ -16,7 +16,8 @@ import {
   getRelatedSymbolIds,
   clearProjectData,
 } from '../store/sqlite-store.js'
-import { buildMeta, countTokens } from './meta.js'
+import { buildMeta } from './meta.js'
+import { countTokens } from '../token/counter.js'
 import type { IncrementalReindexer } from '../indexer/incremental-reindexer.js'
 
 export type SearchMode = 'bm25' | 'vector' | 'hybrid'
@@ -51,10 +52,6 @@ function textResult(text: string, meta?: Record<string, unknown>): ToolResult {
   return result
 }
 
-function estimateTokens(text: string): number {
-  return countTokens(text)
-}
-
 // ── list_projects ─────────────────────────────────────────
 
 export async function handleListProjects(ctx: HandlerContext): Promise<ToolResult> {
@@ -83,7 +80,7 @@ export async function handleListProjects(ctx: HandlerContext): Promise<ToolResul
     projectName: ctx.projectName,
     architecture: ctx.architecture,
     symbolsReturned: 0,
-    tokensInResponse: estimateTokens(text),
+    tokensInResponse: countTokens(text),
     tokensIfNaive: 0,
     confidenceGateFired: false,
     topScore: 0,
@@ -116,8 +113,8 @@ export async function handleGetProjectOutline(
     projectName: outline.projectName,
     architecture: outline.architecture,
     symbolsReturned: 0,
-    tokensInResponse: estimateTokens(text),
-    tokensIfNaive: estimateTokens(text) * 10, // outline is ~10x cheaper than reading all files
+    tokensInResponse: countTokens(text),
+    tokensIfNaive: countTokens(text) * 10, // outline is ~10x cheaper than reading all files
     confidenceGateFired: false,
     topScore: 0,
   })
@@ -157,7 +154,7 @@ export async function handleGetFileOutline(
 
   // Estimate naive cost: reading the entire file
   const fullFilePath = path.join(ctx.safeFs.getProjectRoot(), args.filePath)
-  let naiveTokens = estimateTokens(text) * 5
+  let naiveTokens = countTokens(text) * 5
   try {
     const stat = fs.statSync(fullFilePath)
     naiveTokens = Math.ceil(stat.size / 4)
@@ -169,7 +166,7 @@ export async function handleGetFileOutline(
     projectName: ctx.projectName,
     architecture: ctx.architecture,
     symbolsReturned: symbols.length,
-    tokensInResponse: estimateTokens(text),
+    tokensInResponse: countTokens(text),
     tokensIfNaive: naiveTokens,
     confidenceGateFired: false,
     topScore: 0,
@@ -340,7 +337,7 @@ export async function handleSearchSymbols(
   if (results.length === 0) {
     const chainStr = ctx.searchChain.join(' → ')
     const reason = `No symbols found matching "${args.query}" (tried: ${chainStr})`
-    const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: 0 })
+    const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: countTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: 0 })
     return textResult(reason, meta as unknown as Record<string, unknown>)
   }
 
@@ -365,7 +362,7 @@ export async function handleSearchSymbols(
     projectName: ctx.projectName,
     architecture: ctx.architecture,
     symbolsReturned: results.length,
-    tokensInResponse: estimateTokens(text),
+    tokensInResponse: countTokens(text),
     tokensIfNaive: naiveTokens,
     confidenceGateFired: gateFired,
     topScore,
@@ -425,7 +422,7 @@ export async function handleGetSymbol(
   const text = JSON.stringify(result, null, 2)
 
   // Naive cost: reading entire file
-  let naiveTokens = estimateTokens(text) * 5
+  let naiveTokens = countTokens(text) * 5
   try {
     const stat = fs.statSync(fullPath)
     naiveTokens = Math.ceil(stat.size / 4)
@@ -437,7 +434,7 @@ export async function handleGetSymbol(
     projectName: ctx.projectName,
     architecture: ctx.architecture,
     symbolsReturned: 1,
-    tokensInResponse: estimateTokens(text),
+    tokensInResponse: countTokens(text),
     tokensIfNaive: naiveTokens,
     confidenceGateFired: false,
     topScore: 0,
@@ -521,7 +518,7 @@ export async function handleGetSymbols(
     projectName: ctx.projectName,
     architecture: ctx.architecture,
     symbolsReturned: results.length,
-    tokensInResponse: estimateTokens(text),
+    tokensInResponse: countTokens(text),
     tokensIfNaive: totalNaiveTokens,
     confidenceGateFired: false,
     topScore: 0,
@@ -582,8 +579,8 @@ export async function handleSearchSchema(
       projectName: ctx.projectName,
       architecture: ctx.architecture,
       symbolsReturned: rows.length,
-      tokensInResponse: estimateTokens(text),
-      tokensIfNaive: estimateTokens(text) * 5,
+      tokensInResponse: countTokens(text),
+      tokensIfNaive: countTokens(text) * 5,
       confidenceGateFired: false,
       topScore: rows[0]?.score ?? 0,
     })
@@ -625,7 +622,7 @@ export async function handleGetContextForTask(
     searchChain: ctx.searchChain,
   }
 
-  let usedTokens = estimateTokens(JSON.stringify(context))
+  let usedTokens = countTokens(JSON.stringify(context))
   const symbolEntries: Record<string, unknown>[] = []
 
   for (const r of searchedSymbols) {
@@ -641,7 +638,7 @@ export async function handleGetContextForTask(
       springRole: r.springRole ?? fullSym?.springRole,
       hexRole: r.hexRole ?? fullSym?.hexRole,
     }
-    const entryTokens = estimateTokens(JSON.stringify(entry))
+    const entryTokens = countTokens(JSON.stringify(entry))
     if (usedTokens + entryTokens > budget) break
     symbolEntries.push(entry)
     usedTokens += entryTokens
@@ -672,7 +669,7 @@ export async function handleGetContextForTask(
     projectName: ctx.projectName,
     architecture: ctx.architecture,
     symbolsReturned: symbolEntries.length,
-    tokensInResponse: estimateTokens(text),
+    tokensInResponse: countTokens(text),
     tokensIfNaive: naiveTokens,
     confidenceGateFired: searchedSymbols.length === 0,
     topScore: 0,

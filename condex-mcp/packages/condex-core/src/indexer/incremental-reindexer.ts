@@ -7,17 +7,17 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { Symbol } from '../types/symbol.js'
 import type { SymbolRef } from '../types/schema.js'
-import { insertSymbols, insertRefs } from '../store/sqlite-store.js'
-import { insertVectors, clearVectors } from '../retrieval/vector-search.js'
-import type { Embedder } from '../embeddings/local-embed.js'
-import { glob } from 'glob'
 import type { CondexConfig } from '../types/config.js'
 import { DEFAULT_CONFIG } from '../types/config.js'
+import { insertSymbols, insertRefs } from '../store/sqlite-store.js'
+import { insertVectors } from '../retrieval/vector-search.js'
+import type { Embedder } from '../embeddings/local-embed.js'
+import { glob } from 'glob'
 import { parseGenericFile, isBinaryExtension } from './generic-file-parser.js'
+import { detectLanguage, findSourceFiles, hashContent, mergeExcludes } from './shared.js'
 
 export type ParseFileWithRefsFn = (content: string, opts: {
   projectId: string
@@ -50,9 +50,7 @@ export class IncrementalReindexer {
   private embedder?: Embedder | null
   private prepareSymbolText?: PrepareSymbolTextFn
   private config: Partial<CondexConfig>
-
-  /** In-memory file hash cache: filePath → content hash */
-  private fileHashes: Map<string, string> = new Map()
+  private fileHashes = new Map<string, string>()
   private initialized = false
 
   constructor(opts: IncrementalReindexerOpts) {
@@ -65,10 +63,6 @@ export class IncrementalReindexer {
     this.config = opts.config ?? {}
   }
 
-  /**
-   * Build the initial hash cache from all currently-indexed symbols' source files.
-   * Called once after startup indexing completes.
-   */
   initializeHashes(fileHashes: Record<string, string>): void {
     this.fileHashes.clear()
     for (const [filePath, hash] of Object.entries(fileHashes)) {
@@ -79,9 +73,7 @@ export class IncrementalReindexer {
 
   /**
    * Check for changed files and re-index only what changed.
-   * Safe to call on every query — fast no-op if nothing changed.
-   *
-   * Returns the number of files re-indexed (0 if nothing changed).
+   * Fast no-op if nothing changed.
    */
   async reindexIfNeeded(): Promise<number> {
     if (!this.initialized) return 0
@@ -102,19 +94,16 @@ export class IncrementalReindexer {
       try {
         content = fs.readFileSync(absPath, 'utf-8')
       } catch {
-        // File was deleted — remove its symbols
+        // File deleted — remove its symbols
         this.removeSymbolsForFile(relPath)
         this.fileHashes.delete(relPath)
+        console.error(`[condex] File deleted, symbols removed: ${relPath}`)
         continue
       }
 
-      const newHash = hashContent(content)
-      this.fileHashes.set(relPath, newHash)
-
-      // Remove old symbols for this file
+      this.fileHashes.set(relPath, hashContent(content))
       this.removeSymbolsForFile(relPath)
 
-      // Route to appropriate parser
       if (langFileSet.has(relPath) && this.parseFileWithRefs) {
         try {
           const result = this.parseFileWithRefs(content, {
@@ -127,7 +116,6 @@ export class IncrementalReindexer {
           console.error(`[condex] Error re-parsing ${relPath}: ${err.message}`)
         }
       } else {
-        // Generic file
         const sym = parseGenericFile(content, {
           projectId: this.projectId,
           filePath: relPath,
@@ -136,31 +124,17 @@ export class IncrementalReindexer {
       }
     }
 
-    // Insert new symbols into BM25/FTS
-    if (allNewSymbols.length > 0) {
-      insertSymbols(this.db, allNewSymbols)
-    }
+    if (allNewSymbols.length > 0) insertSymbols(this.db, allNewSymbols)
+    if (allNewRefs.length > 0) insertRefs(this.db, allNewRefs)
 
-    // Insert new refs
-    if (allNewRefs.length > 0) {
-      insertRefs(this.db, allNewRefs)
-    }
-
-    // Update vector index for changed symbols
     if (this.embedder && this.prepareSymbolText && allNewSymbols.length > 0) {
       await this.updateVectorIndex(allNewSymbols)
     }
 
-    console.error(
-      `[condex] Re-indexed ${allNewSymbols.length} symbols from ${changedFiles.length} files`
-    )
-
+    console.error(`[condex] Re-indexed ${allNewSymbols.length} symbols from ${changedFiles.length} files`)
     return changedFiles.length
   }
 
-  /**
-   * Scan source files and return changed paths, split into language and supplemental.
-   */
   private async detectChangedFiles(): Promise<{
     languageFiles: string[]
     supplementalFiles: string[]
@@ -169,9 +143,7 @@ export class IncrementalReindexer {
     const sourceFiles = await findSourceFiles(this.projectRoot, language, this.config)
     const sourceFileSet = new Set(sourceFiles)
 
-    // Find supplemental (non-language) files
-    const exclude = this.config.exclude ?? DEFAULT_CONFIG.exclude
-    const allExclude = [...new Set([...exclude, '**/.condex/**'])]
+    const allExclude = mergeExcludes(this.config)
     const allFiles = await glob('**/*', {
       cwd: this.projectRoot,
       ignore: allExclude,
@@ -185,36 +157,26 @@ export class IncrementalReindexer {
     const changedSupp: string[] = []
 
     for (const relPath of allFilesToCheck) {
-      const absPath = path.join(this.projectRoot, relPath)
       let content: string
       try {
-        content = fs.readFileSync(absPath, 'utf-8')
+        content = fs.readFileSync(path.join(this.projectRoot, relPath), 'utf-8')
       } catch {
         if (this.fileHashes.has(relPath)) {
-          if (sourceFileSet.has(relPath)) changedLang.push(relPath)
-          else changedSupp.push(relPath)
+          ;(sourceFileSet.has(relPath) ? changedLang : changedSupp).push(relPath)
         }
         continue
       }
 
-      const currentHash = hashContent(content)
-      const previousHash = this.fileHashes.get(relPath)
-
-      if (previousHash !== currentHash) {
-        if (sourceFileSet.has(relPath)) changedLang.push(relPath)
-        else changedSupp.push(relPath)
+      if (this.fileHashes.get(relPath) !== hashContent(content)) {
+        ;(sourceFileSet.has(relPath) ? changedLang : changedSupp).push(relPath)
       }
     }
 
     // Detect deleted files
     const allFileSet = new Set(allFilesToCheck)
     for (const relPath of this.fileHashes.keys()) {
-      if (!allFileSet.has(relPath)) {
-        const absPath = path.join(this.projectRoot, relPath)
-        if (!fs.existsSync(absPath)) {
-          if (sourceFileSet.has(relPath)) changedLang.push(relPath)
-          else changedSupp.push(relPath)
-        }
+      if (!allFileSet.has(relPath) && !fs.existsSync(path.join(this.projectRoot, relPath))) {
+        ;(sourceFileSet.has(relPath) ? changedLang : changedSupp).push(relPath)
       }
     }
 
@@ -224,13 +186,9 @@ export class IncrementalReindexer {
     }
   }
 
-  /**
-   * Remove all symbols + FTS + vector entries for a given source file.
-   */
   private removeSymbolsForFile(filePath: string): void {
-    // Get symbol IDs for this file
     const rows = this.db.prepare(
-      'SELECT id FROM symbols WHERE project_id = ? AND file_path = ?'
+      'SELECT id FROM symbols WHERE project_id = ? AND file_path = ?',
     ).all(this.projectId, filePath) as { id: string }[]
 
     if (rows.length === 0) return
@@ -238,33 +196,25 @@ export class IncrementalReindexer {
     const deleteSymbol = this.db.prepare('DELETE FROM symbols WHERE id = ?')
     const deleteFts = this.db.prepare('DELETE FROM symbols_fts WHERE id = ?')
     const deleteRefs = this.db.prepare(
-      'DELETE FROM symbol_refs WHERE source_symbol_id = ? AND project_id = ?'
+      'DELETE FROM symbol_refs WHERE source_symbol_id = ? AND project_id = ?',
     )
 
-    // Check if symbol_vectors table exists (only when vec is loaded)
     let deleteVec: ReturnType<Database.Database['prepare']> | null = null
     try {
       this.db.prepare('SELECT 1 FROM symbol_vectors LIMIT 0').get()
       deleteVec = this.db.prepare('DELETE FROM symbol_vectors WHERE symbol_id = ?')
-    } catch {
-      // Table doesn't exist — skip vector cleanup
-    }
+    } catch { /* table doesn't exist */ }
 
     this.db.transaction(() => {
       for (const row of rows) {
         deleteFts.run(row.id)
         deleteSymbol.run(row.id)
         deleteRefs.run(row.id, this.projectId)
-        if (deleteVec) {
-          deleteVec.run(row.id)
-        }
+        deleteVec?.run(row.id)
       }
     })()
   }
 
-  /**
-   * Embed and insert vector entries for new/changed symbols.
-   */
   private async updateVectorIndex(symbols: Symbol[]): Promise<void> {
     if (!this.embedder || !this.prepareSymbolText) return
 
@@ -285,89 +235,4 @@ export class IncrementalReindexer {
       insertVectors(this.db, vectors)
     }
   }
-}
-
-function hashContent(content: string): string {
-  return crypto.createHash('sha256').update(content).digest('hex').slice(0, 20)
-}
-
-function detectLanguage(projectRoot: string): string {
-  // Priority-ordered: Java > TypeScript > Python
-  // Use glob to search any depth (real projects can be 20+ levels deep)
-  const ignore = ['**/node_modules/**', '**/build/classes/**', '**/build/generated/**', '**/build/libs/**', '**/build/tmp/**', '**/target/classes/**', '**/target/generated-sources/**', '**/target/test-classes/**', '**/dist/out/**', '**/.git/**', '**/.condex/**']
-
-  const javaMarkers = ['pom.xml', 'build.gradle', 'build.gradle.kts']
-  for (const marker of javaMarkers) {
-    try {
-      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
-      if (found.length > 0) return 'java'
-    } catch { /* ignore */ }
-  }
-
-  const tsMarkers = ['tsconfig.json']
-  for (const marker of tsMarkers) {
-    try {
-      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
-      if (found.length > 0) return 'typescript'
-    } catch { /* ignore */ }
-  }
-
-  if (fs.existsSync(path.join(projectRoot, 'package.json'))) return 'typescript'
-
-  const pyMarkers = ['requirements.txt', 'pyproject.toml']
-  for (const marker of pyMarkers) {
-    try {
-      const found = glob.sync(`**/${marker}`, { cwd: projectRoot, ignore, nodir: true, maxDepth: 50 })
-      if (found.length > 0) return 'python'
-    } catch { /* ignore */ }
-  }
-
-  return 'java'
-}
-
-async function findSourceFiles(
-  projectRoot: string,
-  language: string,
-  config: Partial<CondexConfig>
-): Promise<string[]> {
-  const extensionMap: Record<string, string[]> = {
-    java: ['**/*.java', '**/*.kt', '**/*.kts'],
-    typescript: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
-    python: ['**/*.py'],
-    all: [
-      '**/*.java', '**/*.kt', '**/*.kts',
-      '**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs', '**/*.mts', '**/*.cts',
-      '**/*.py',
-      '**/*.go',
-      '**/*.rs',
-      '**/*.c', '**/*.h',
-      '**/*.cpp', '**/*.cc', '**/*.cxx', '**/*.hpp', '**/*.hxx', '**/*.hh',
-      '**/*.rb', '**/*.rake', '**/*.gemspec',
-      '**/*.cs',
-      '**/*.sh', '**/*.bash', '**/*.zsh',
-      '**/*.swift',
-      '**/*.php',
-      '**/*.scala', '**/*.sc',
-      '**/*.lua',
-      '**/*.hs', '**/*.lhs',
-      '**/*.ex', '**/*.exs',
-      '**/*.r', '**/*.R',
-      '**/*.ml', '**/*.mli',
-      '**/*.zig',
-    ],
-  }
-  const include = config.include ?? extensionMap[language] ?? extensionMap.all
-  const exclude = config.exclude ?? DEFAULT_CONFIG.exclude
-  const allExclude = [...new Set([...exclude, '**/.condex/**'])]
-
-  const files: string[] = []
-  for (const pattern of include) {
-    const matched = await glob(pattern, {
-      cwd: projectRoot,
-      ignore: allExclude,
-      nodir: true,
-    })
-    files.push(...matched)
-  }
-  return [...new Set(files)].sort()
 }
