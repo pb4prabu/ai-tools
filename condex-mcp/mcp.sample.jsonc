@@ -1,0 +1,62 @@
+// Condex MCP — Sample Configuration
+//
+// Copy the "condex" block below into your MCP config file:
+//   - Claude Code:  .mcp.json (mcpServers.condex)
+//   - OpenCode:     opencode.json (mcp.condex)
+//
+// IMPORTANT: JSON does not support comments.
+// Remove all // comment lines before pasting into .mcp.json or opencode.json.
+
+{
+  "mcpServers": {
+    "condex": {
+      "command": "node",
+      "args": ["/path/to/condex-mcp/packages/condex-core/dist/server.js"],
+      "env": {
+        // Search priority chain (comma-separated, left = highest priority)
+        //
+        // How it works:
+        //   Condex tries each mode left-to-right and stops at the first
+        //   one that returns results. If a mode returns nothing (or is
+        //   unavailable), it falls through to the next.
+        //
+        // Available modes:
+        //   vector  — Semantic search using embedding model (~768d vectors).
+        //             Best for natural language queries ("how does payment work?").
+        //             Requires: sqlite-vec + @huggingface/transformers + model download.
+        //
+        //   bm25    — Keyword search using SQLite FTS5 with CamelCase splitting.
+        //             Best for exact names ("OrderService", "CreateOrderHandler").
+        //             No model needed, fastest (~5-50ms).
+        //
+        //   hybrid  — Runs BOTH vector + BM25 in parallel, fuses results with
+        //             Reciprocal Rank Fusion (RRF). Best recall but slower.
+        //
+        // Examples:
+        //   "vector,bm25"  → Vector first, BM25 fallback (recommended)
+        //   "bm25,vector"  → BM25 first, vector fallback on no results
+        //   "bm25"         → BM25 only (no model download needed)
+        //   "vector"       → Vector only, no fallback
+        //   "hybrid"       → Always fuse both modes
+        //   "hybrid,bm25"  → Hybrid first, BM25 fallback if both empty
+        //
+        // If vector/hybrid is in the chain but sqlite-vec or the embedding
+        // model is unavailable, Condex automatically removes it from the
+        // chain and falls back to the remaining modes.
+        "CONDEX_SEARCH_MODE": "vector,bm25",
+
+        // Minimum BM25 relevance score (0.0–1.0). Results below this are filtered out.
+        // Lower = more results (less precise), higher = fewer results (more precise).
+        "CONDEX_BM25_MIN_SCORE": "0.3",
+
+        // Maximum vector distance (0.0–1.0). Results farther than this are filtered out.
+        // Lower = stricter matching, higher = more results.
+        "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
+
+        // Optional: Override where the embedding model is cached.
+        // Default: ~/.condex/models/
+        // "CONDEX_MODEL_CACHE_DIR": "/path/to/models"
+      }
+    }
+  }
+}
