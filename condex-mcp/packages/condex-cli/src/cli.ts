@@ -189,8 +189,71 @@ async function handleSetup() {
     }
   }
 
-  console.log(`\nCondex MCP configured. No mode selection needed — smart mode is the default.`)
-  console.log(`Server: ${serverPath}`)
+  // Check vector readiness
+  console.log(`\nServer: ${serverPath}`)
+  console.log(``)
+
+  const warnings: string[] = []
+
+  // Check sqlite-vec
+  try {
+    const sqliteVec = esmRequire.resolve('sqlite-vec')
+    console.log(`[ok] sqlite-vec: ${sqliteVec}`)
+  } catch {
+    warnings.push('sqlite-vec not found — vector search will be unavailable')
+  }
+
+  // Check embedding model
+  try {
+    esmRequire.resolve('@huggingface/transformers')
+    console.log(`[ok] @huggingface/transformers: installed`)
+    // Check if model is downloaded
+    const home = process.env.HOME || process.env.USERPROFILE || '/tmp'
+    const modelDir = path.join(home, '.condex', 'models')
+    if (fs.existsSync(modelDir) && fs.readdirSync(modelDir).length > 0) {
+      console.log(`[ok] Embedding model cached: ${modelDir}`)
+    } else {
+      warnings.push('Embedding model not downloaded — will be downloaded on first run (requires internet)')
+    }
+  } catch {
+    warnings.push('@huggingface/transformers not found — vector embeddings will be unavailable')
+  }
+
+  // Check multi-lang parser
+  try {
+    const multiLang = esmRequire('@condex-ai/multi-lang')
+    const supported = multiLang.getSupportedLanguages()
+    console.log(`[ok] Multi-lang parser: ${supported.length} languages (${supported.join(', ')})`)
+  } catch {
+    warnings.push('@condex-ai/multi-lang not found — only Java files will get fine-grained parsing')
+  }
+
+  // Check Java parser
+  try {
+    esmRequire.resolve('@condex-ai/java')
+    console.log(`[ok] Java parser: available`)
+  } catch {
+    // Not a warning — multi-lang handles it
+  }
+
+  if (warnings.length > 0) {
+    console.log(``)
+    console.log(`⚠  WARNING: Condex MCP is NOT in its optimised form`)
+    for (const w of warnings) {
+      console.log(`   - ${w}`)
+    }
+    console.log(``)
+    console.log(`   Vector search provides significantly better results than BM25 alone.`)
+    console.log(`   The MCP will still work (falls back to BM25) but with reduced accuracy.`)
+    console.log(``)
+    console.log(`   To fix:`)
+    console.log(`     cd ${path.dirname(serverPath).replace('/dist', '')}/../..`)
+    console.log(`     npm install`)
+    console.log(`     npm run download-model --workspace=packages/condex-core`)
+  } else {
+    console.log(``)
+    console.log(`Condex MCP is fully configured with vector search enabled.`)
+  }
 }
 
 function printHelp() {

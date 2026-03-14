@@ -298,24 +298,39 @@ export async function handleSearchSymbols(
     results = expandWithCallGraph(ctx.db, results, pid)
 
   } else if (ctx.searchMode === 'vector') {
-    // ── Vector only — distance threshold, no count limit ──
-    if (!ctx.embedder) {
-      return textResult(
-        'Vector search unavailable: embedder not loaded. ' +
-        'Run "npm run download-model" to install the embedding model, ' +
-        'or switch to CONDEX_SEARCH_MODE=bm25.'
-      )
-    }
-    const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
-    topScore = vecResults.length > 0 ? (1 - vecResults[0].distance) : 0
+    // ── Vector primary, BM25 fallback ──
+    if (ctx.embedder) {
+      const vecResults = await vectorSearch(ctx.db, args.query, pid, ctx.embedder, thresholds.vectorMaxDistance)
+      topScore = vecResults.length > 0 ? (1 - vecResults[0].distance) : 0
 
-    if (vecResults.length === 0) {
-      const reason = `No symbols found matching "${args.query}" via vector search`
-      const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: false, topScore: 0 })
-      return textResult(reason, meta as unknown as Record<string, unknown>)
+      if (vecResults.length > 0) {
+        results = vecResults.map(v => vectorResultToSearchResult(v, ctx.db, 'vector'))
+      } else {
+        // Vector returned nothing — fall back to BM25
+        gateFired = true
+        const rawResults = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
+        topScore = rawResults[0]?.bm25Score ?? 0
+        if (rawResults.length === 0) {
+          const reason = `No symbols found matching "${args.query}" (vector and BM25 both empty)`
+          const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: 0 })
+          return textResult(reason, meta as unknown as Record<string, unknown>)
+        }
+        results = rawResults.map(r => bm25ResultToSearchResult(r, 'bm25-fallback'))
+        results = expandWithCallGraph(ctx.db, results, pid)
+      }
+    } else {
+      // Embedder unavailable — fall back to BM25
+      gateFired = true
+      const rawResults = searchBM25(ctx.db, args.query, pid, filters, thresholds.bm25MinScore)
+      topScore = rawResults[0]?.bm25Score ?? 0
+      if (rawResults.length === 0) {
+        const reason = `No symbols found matching "${args.query}" (vector unavailable, BM25 empty)`
+        const meta = buildMeta({ startMs, projectId: pid, projectName: ctx.projectName, architecture: ctx.architecture, symbolsReturned: 0, tokensInResponse: estimateTokens(reason), tokensIfNaive: 0, confidenceGateFired: true, topScore: 0 })
+        return textResult(reason, meta as unknown as Record<string, unknown>)
+      }
+      results = rawResults.map(r => bm25ResultToSearchResult(r, 'bm25-fallback'))
+      results = expandWithCallGraph(ctx.db, results, pid)
     }
-
-    results = vecResults.map(v => vectorResultToSearchResult(v, ctx.db, 'vector'))
 
   } else if (ctx.searchMode === 'smart') {
     // ── Smart: BM25 first (conservative), vector fallback ──

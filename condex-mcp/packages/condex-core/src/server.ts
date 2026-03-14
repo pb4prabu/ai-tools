@@ -2,7 +2,7 @@
 
 // Block outbound network unless vector/hybrid mode needs model download
 import { blockOutboundNetwork } from './security/network-guard.js'
-const searchMode = process.env.CONDEX_SEARCH_MODE ?? 'smart'
+const searchMode = process.env.CONDEX_SEARCH_MODE ?? 'vector'
 if (searchMode === 'bm25') {
   blockOutboundNetwork()
 } else {
@@ -36,7 +36,7 @@ import { writeErrorLog, writeIndexStatus, initCondexDir, type IndexStatus } from
 
 const PROJECT_ROOT = path.resolve(process.cwd())
 const TOOL_VERSION = '1.0.0'
-const SEARCH_MODE = (process.env.CONDEX_SEARCH_MODE ?? 'smart') as SearchMode
+const SEARCH_MODE = (process.env.CONDEX_SEARCH_MODE ?? 'vector') as SearchMode
 
 // Configurable thresholds via env vars
 const BM25_MIN_SCORE = parseFloat(process.env.CONDEX_BM25_MIN_SCORE ?? '0.3')
@@ -219,10 +219,11 @@ async function main() {
     } catch { /* best effort */ }
   }
 
-  // Initialize embedder — smart mode gracefully degrades, other modes require it
+  // Initialize embedder — vector is default, gracefully degrades to BM25 if unavailable
   console.error(`[condex] Search mode: ${SEARCH_MODE}`)
   let embedder: Embedder | null = null
   let vecReady = false
+  let effectiveSearchMode: SearchMode = SEARCH_MODE
 
   if (SEARCH_MODE === 'vector' || SEARCH_MODE === 'hybrid' || SEARCH_MODE === 'smart') {
     // Step 1: Load sqlite-vec extension
@@ -232,17 +233,10 @@ async function main() {
       console.error(`[condex] [1/3] sqlite-vec loaded, symbol_vectors table ready`)
       vecReady = true
     } catch (err: any) {
-      console.error(`[condex] sqlite-vec failed to load: ${err.message}`)
-      if (SEARCH_MODE === 'smart') {
-        console.error(`[condex] Degrading to BM25-only (vector unavailable)`)
-        indexStatus.vector = { status: 'failed', error: `sqlite-vec load failed: ${err.message}`, timestamp: new Date().toISOString() }
-      } else {
-        console.error(`[condex] FATAL: sqlite-vec required for ${SEARCH_MODE} mode`)
-        indexStatus.vector = { status: 'failed', error: `sqlite-vec load failed: ${err.message}`, timestamp: new Date().toISOString() }
-        indexStatus.lastUpdated = new Date().toISOString()
-        try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
-        process.exit(1)
-      }
+      console.error(`[condex] WARNING: sqlite-vec failed to load: ${err.message}`)
+      console.error(`[condex] Falling back to BM25-only search`)
+      indexStatus.vector = { status: 'failed', error: `sqlite-vec load failed: ${err.message}`, timestamp: new Date().toISOString() }
+      effectiveSearchMode = 'bm25'
     }
 
     // Step 2: Load embedding model (skip if step 1 failed)
@@ -256,18 +250,11 @@ async function main() {
         embedder = await getEmbed()
         console.error(`[condex] [2/3] Embedder ready (${embedder.dimensions} dimensions)`)
       } catch (err: any) {
-        console.error(`[condex] Embedding model failed to load: ${err.message}`)
+        console.error(`[condex] WARNING: Embedding model failed to load: ${err.message}`)
+        console.error(`[condex] Falling back to BM25-only search`)
         vecReady = false
-        if (SEARCH_MODE === 'smart') {
-          console.error(`[condex] Degrading to BM25-only (embedder unavailable)`)
-          indexStatus.vector = { status: 'failed', error: `Embedding model failed: ${err.message}`, timestamp: new Date().toISOString() }
-        } else {
-          console.error(`[condex] FATAL: Embedder required for ${SEARCH_MODE} mode`)
-          indexStatus.vector = { status: 'failed', error: `Embedding model failed: ${err.message}`, timestamp: new Date().toISOString() }
-          indexStatus.lastUpdated = new Date().toISOString()
-          try { await writeIndexStatus(safeFs, indexStatus) } catch { /* best effort */ }
-          process.exit(1)
-        }
+        indexStatus.vector = { status: 'failed', error: `Embedding model failed: ${err.message}`, timestamp: new Date().toISOString() }
+        effectiveSearchMode = 'bm25'
       }
     }
 
@@ -367,6 +354,10 @@ async function main() {
     }
   }
 
+  if (effectiveSearchMode !== SEARCH_MODE) {
+    console.error(`[condex] Effective search mode: ${effectiveSearchMode} (requested: ${SEARCH_MODE})`)
+  }
+
   // Build handler context
   const ctx: HandlerContext = {
     db,
@@ -374,7 +365,7 @@ async function main() {
     projectId: namespace,
     projectName,
     architecture,
-    searchMode: SEARCH_MODE,
+    searchMode: effectiveSearchMode,
     embedder,
     thresholds: {
       bm25MinScore: BM25_MIN_SCORE,
