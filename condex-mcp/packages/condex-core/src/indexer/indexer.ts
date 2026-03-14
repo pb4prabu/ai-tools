@@ -19,6 +19,7 @@ import {
   acquireIndexLock,
   releaseIndexLock,
   hashContent,
+  writeErrorLog,
 } from '../store/fs-store.js'
 import {
   insertProject,
@@ -342,6 +343,15 @@ export async function indexProject(
       symbolsByKind,
       parseErrors: parseErrors > 0 ? parseErrors : undefined,
     }
+  } catch (err: any) {
+    // Log error to .condex/index/errors.log for diagnosis
+    await writeErrorLog(safeFs, {
+      phase: 'indexProject',
+      message: err.message,
+      stack: err.stack,
+      context: { projectId, projectName, full: !!opts.full },
+    })
+    throw err // re-throw so caller knows indexing failed
   } finally {
     await releaseIndexLock(safeFs)
   }

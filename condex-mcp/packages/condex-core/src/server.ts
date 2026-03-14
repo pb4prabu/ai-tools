@@ -32,6 +32,7 @@ import { SavingsTracker } from './token/savings.js'
 import type { HandlerContext, SearchMode } from './mcp/handlers.js'
 import type { Embedder } from './embeddings/local-embed.js'
 import { loadVec, insertVectors } from './retrieval/vector-search.js'
+import { writeErrorLog, initCondexDir } from './store/fs-store.js'
 
 const PROJECT_ROOT = path.resolve(process.cwd())
 const TOOL_VERSION = '1.0.0'
@@ -126,6 +127,15 @@ async function main() {
     }
   } catch (err: any) {
     console.error(`[condex] Error during startup indexing: ${err.message}`)
+    try {
+      await initCondexDir(safeFs)
+      await writeErrorLog(safeFs, {
+        phase: 'startup',
+        message: err.message,
+        stack: err.stack,
+        context: { projectRoot: PROJECT_ROOT, searchMode: SEARCH_MODE },
+      })
+    } catch { /* best effort */ }
   }
 
   // Initialize embedder for vector/hybrid modes

@@ -154,6 +154,35 @@ export async function readMeta(safeFs: SafeFS): Promise<ProjectMeta | null> {
   }
 }
 
+// ── Error Log ────────────────────────────────────────────────
+
+export async function writeErrorLog(safeFs: SafeFS, error: {
+  phase: string
+  message: string
+  stack?: string
+  context?: Record<string, unknown>
+}): Promise<void> {
+  const logDir = path.join(safeFs.getCondexDir(), 'index')
+  try {
+    await safeFs.mkdir(logDir)
+  } catch { /* already exists */ }
+
+  const logPath = path.join(logDir, 'errors.log')
+  const entry = {
+    timestamp: new Date().toISOString(),
+    ...error,
+  }
+
+  // Append to log file
+  let existing = ''
+  try {
+    existing = await safeFs.readFile(logPath)
+  } catch { /* file doesn't exist yet */ }
+
+  const separator = existing ? '\n---\n' : ''
+  await safeFs.writeFile(logPath, existing + separator + JSON.stringify(entry, null, 2))
+}
+
 // ── Condex Config ───────────────────────────────────────────
 
 export async function readCondexConfig(safeFs: SafeFS): Promise<CondexConfig | null> {
