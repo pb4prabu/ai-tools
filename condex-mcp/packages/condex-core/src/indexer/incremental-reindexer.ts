@@ -17,20 +17,7 @@ import { insertVectors } from '../retrieval/vector-search.js'
 import type { Embedder } from '../embeddings/local-embed.js'
 import { glob } from 'glob'
 import { parseGenericFile, isBinaryExtension } from './generic-file-parser.js'
-import { detectLanguage, findSourceFiles, hashContent, mergeExcludes } from './shared.js'
-
-export type ParseFileWithRefsFn = (content: string, opts: {
-  projectId: string
-  filePath: string
-  profile?: any
-}) => { symbols: Symbol[]; refs: SymbolRef[] }
-
-export type PrepareSymbolTextFn = (symbol: {
-  qualifiedName: string
-  signature: string
-  javadoc?: string | null
-  kind?: string
-}) => string
+import { detectLanguage, findSourceFiles, hashContent, mergeExcludes, type ParseFileWithRefsFn, type PrepareSymbolTextFn } from './shared.js'
 
 export interface IncrementalReindexerOpts {
   db: Database.Database

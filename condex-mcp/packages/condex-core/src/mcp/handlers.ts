@@ -460,7 +460,6 @@ export async function handleGetSymbols(
   }
 
   const results: Record<string, unknown>[] = []
-  let totalNaiveTokens = 0
 
   for (const symbol of symbols) {
     const fullPath = path.join(ctx.safeFs.getProjectRoot(), symbol.filePath)
@@ -472,7 +471,6 @@ export async function handleGetSymbols(
       const snippet = buf.subarray(symbol.byteOffset, symbol.byteOffset + symbol.byteLength)
       sourceCode = snippet.toString('utf-8')
 
-      const crypto = require('node:crypto')
       const actualHash = crypto.createHash('sha256').update(snippet).digest('hex').slice(0, 12)
       if (symbol.contentHash && actualHash !== symbol.contentHash) {
         hashMismatch = true
@@ -489,18 +487,11 @@ export async function handleGetSymbols(
     }
     if (hashMismatch) entry.warning = 'Source changed since indexing.'
     results.push(entry)
-
-    try {
-      const stat = fs.statSync(fullPath)
-      totalNaiveTokens += Math.ceil(stat.size / 4)
-    } catch {
-      totalNaiveTokens += 1000
-    }
   }
 
-  // De-duplicate naive cost by file
+  // De-duplicate naive cost by unique file
   const uniqueFiles = [...new Set(symbols.map(s => s.filePath))]
-  totalNaiveTokens = 0
+  let totalNaiveTokens = 0
   for (const fp of uniqueFiles) {
     try {
       const stat = fs.statSync(path.join(ctx.safeFs.getProjectRoot(), fp))
@@ -676,21 +667,6 @@ export async function handleGetContextForTask(
   })
 
   return textResult(text, meta as unknown as Record<string, unknown>)
-}
-
-// ── index_folder ──────────────────────────────────────────
-
-export async function handleIndexFolder(
-  ctx: HandlerContext,
-  args: { full?: boolean }
-): Promise<ToolResult> {
-  const startMs = Date.now()
-
-  // Phase 7 will implement full parsing. For now, return a stub.
-  return textResult(JSON.stringify({
-    status: 'not_implemented',
-    message: 'Parser not yet available. Index loading from .condex/index/ works via auto-index on startup.',
-  }, null, 2))
 }
 
 // ── invalidate_cache ──────────────────────────────────────

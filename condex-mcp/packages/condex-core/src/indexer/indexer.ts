@@ -35,6 +35,7 @@ import {
   findFiles,
   mergeExcludes,
   hashContent,
+  type ParseFileWithRefsFn,
 } from './shared.js'
 
 const TOOL_VERSION = '1.0.0'
@@ -61,12 +62,6 @@ export type ParseFileFn = (content: string, opts: {
   filePath: string
   profile?: any
 }) => Symbol[]
-
-export type ParseFileWithRefsFn = (content: string, opts: {
-  projectId: string
-  filePath: string
-  profile?: any
-}) => { symbols: Symbol[]; refs: SymbolRef[] }
 
 export type DetectArchFn = (filePaths: string[]) => {
   architecture: string
@@ -510,4 +505,4 @@ function findMatchingPattern(filePath: string, patterns: string[]): string | nul
 }
 
 // Re-export shared utilities for external consumers (CLI, etc.)
-export { detectLanguage, findSourceFiles, hashContent } from './shared.js'
+export { detectLanguage, findSourceFiles, hashContent, type ParseFileWithRefsFn } from './shared.js'

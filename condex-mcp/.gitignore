@@ -8,5 +8,6 @@ dist/
 .condex/.indexing.lock
 *.tsbuildinfo
 .DS_Store
-opencode.sample.json
+mcp.sample.jsonc
+opencode.sample.jsonc
 packages/condex-core/.condex/

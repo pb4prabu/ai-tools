@@ -442,9 +442,9 @@ async function main() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params
 
-    // index_folder: use actual parser if available
-    if (name === 'index_folder' && javaParsers) {
-      return handleIndexFolderCall(db, safeFs, ctx, reindexer, namespace, embedder, prepareSymbolTextFn, javaParsers, args ?? {})
+    // index_folder: use composite parser if available
+    if (name === 'index_folder' && compositeParser) {
+      return handleIndexFolderCall(db, safeFs, ctx, reindexer, namespace, embedder, prepareSymbolTextFn, compositeParser, javaParsers, args ?? {})
     }
 
     return dispatch(name, args ?? {}, ctx)
@@ -465,16 +465,17 @@ async function handleIndexFolderCall(
   namespace: string,
   embedder: Embedder | null,
   prepareSymbolTextFn: PrepareSymbolTextFn | undefined,
-  javaParsers: NonNullable<ReturnType<typeof loadJavaParser>>,
+  compositeParser: ParseFileWithRefsFn,
+  javaParsers: ReturnType<typeof loadJavaParser>,
   args: Record<string, unknown>,
 ) {
   const full = (args as any)?.full ?? false
   const result = await indexProject(db, safeFs, {
     full,
-    parseFileWithRefs: javaParsers.parseFileWithRefs,
-    detectArch: javaParsers.detectArch,
-    parseSql: javaParsers.parseSql,
-    parseYaml: javaParsers.parseYaml,
+    parseFileWithRefs: compositeParser,
+    detectArch: javaParsers?.detectArch,
+    parseSql: javaParsers?.parseSql,
+    parseYaml: javaParsers?.parseYaml,
   })
   ctx.architecture = result.architecture
 

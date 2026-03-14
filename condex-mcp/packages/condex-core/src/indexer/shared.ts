@@ -118,3 +118,21 @@ export function mergeExcludes(config: Partial<CondexConfig>): string[] {
 export function hashContent(content: string): string {
   return crypto.createHash('sha256').update(content).digest('hex').slice(0, 20)
 }
+
+// ── Shared type definitions (used by indexer + incremental-reindexer + vector-embed) ──
+
+import type { Symbol } from '../types/symbol.js'
+import type { SymbolRef } from '../types/schema.js'
+
+export type ParseFileWithRefsFn = (content: string, opts: {
+  projectId: string
+  filePath: string
+  profile?: any
+}) => { symbols: Symbol[]; refs: SymbolRef[] }
+
+export type PrepareSymbolTextFn = (symbol: {
+  qualifiedName: string
+  signature: string
+  javadoc?: string | null
+  kind?: string
+}) => string

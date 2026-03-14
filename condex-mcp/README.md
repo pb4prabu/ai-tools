@@ -42,9 +42,10 @@ Behind a proxy: `HTTPS_PROXY=http://proxy:port npm run setup`
 
 ### Add to Your Project
 
-**Option A** — auto-create config files:
+**Option A** — auto-create config files (run from the condex-mcp directory):
 
 ```bash
+cd /path/to/condex-mcp
 npx condex setup /path/to/your/project
 ```
 

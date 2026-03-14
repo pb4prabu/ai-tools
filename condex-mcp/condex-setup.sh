@@ -6,7 +6,7 @@
 # With proxy: HTTPS_PROXY=http://proxy:port bash condex-setup.sh
 # ============================================================
 
-set -e
+set -eo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -110,7 +110,7 @@ const db = new Database(':memory:');
 sqliteVec.load(db);
 db.exec('CREATE VIRTUAL TABLE t USING vec0(id TEXT PRIMARY KEY, e float[4])');
 console.log('  sqlite-vec: OK');
-" 2>&1 | grep -E "OK|Error|FAIL" || fail "sqlite-vec check failed"
+" 2>&1 | grep -E "OK|Error|FAIL" || { fail "sqlite-vec check failed"; exit 1; }
 
 if [ -f "$ONNX_DIR/model_quantized.onnx" ]; then
   ok "Model: cached at $MODEL_SUBDIR"
@@ -177,7 +177,7 @@ echo "========================================="
 echo "  Next: Add Condex to your project"
 echo "========================================="
 echo ""
-echo "  Option 1: Auto-create config files in your project:"
+echo "  Option 1: Auto-create config files (run from this directory):"
 echo -e "    ${CYAN}npx condex setup /path/to/your/project${NC}"
 echo ""
 echo "  Option 2: Manually copy the sample files to your project:"

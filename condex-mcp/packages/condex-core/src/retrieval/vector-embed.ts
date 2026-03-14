@@ -5,6 +5,9 @@
 import type Database from 'better-sqlite3'
 import type { Embedder } from '../embeddings/local-embed.js'
 import { insertVectors, clearVectors } from './vector-search.js'
+import type { PrepareSymbolTextFn } from '../indexer/shared.js'
+
+export type { PrepareSymbolTextFn }
 
 export interface SymbolRow {
   id: string
@@ -13,13 +16,6 @@ export interface SymbolRow {
   javadoc: string | null
   kind: string
 }
-
-export type PrepareSymbolTextFn = (symbol: {
-  qualifiedName: string
-  signature: string
-  javadoc?: string | null
-  kind?: string
-}) => string
 
 const BATCH_SIZE = 50
 

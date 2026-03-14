@@ -8,7 +8,6 @@ import {
   handleGetSymbols,
   handleSearchSchema,
   handleGetContextForTask,
-  handleIndexFolder,
   handleInvalidateCache,
 } from './handlers.js'
 
@@ -51,7 +50,14 @@ export async function dispatch(
       return handleGetContextForTask(ctx, args as any)
 
     case 'index_folder':
-      return handleIndexFolder(ctx, args as any)
+      // Handled directly by server.ts with full parser context.
+      // This fallback only fires if server.ts doesn't intercept (no Java parser).
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          status: 'unavailable',
+          message: 'No parser available. Install @condex-ai/java or @condex-ai/multi-lang to enable indexing.',
+        }, null, 2) }],
+      }
 
     case 'invalidate_cache':
       return handleInvalidateCache(ctx, args as any)
