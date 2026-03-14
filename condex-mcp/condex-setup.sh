@@ -132,45 +132,10 @@ echo "========================================="
 echo "  Next: Add Condex to your project"
 echo "========================================="
 echo ""
-echo "  Option 1: Run condex setup in your project:"
+echo "  Run this in your project directory:"
 echo "    ${CYAN}npx condex setup /path/to/your/project${NC}"
 echo ""
-echo "  Option 2: Manually copy the config below"
-echo ""
-echo -e "  ${YELLOW}Claude Code${NC} — paste into .mcp.json in your project root:"
-echo ""
-cat <<MCPEOF
-  {
-    "mcpServers": {
-      "condex": {
-        "command": "node",
-        "args": ["$SERVER_JS"],
-        "env": {
-          "CONDEX_SEARCH_MODE": "vector,bm25",
-          "CONDEX_BM25_MIN_SCORE": "0.3",
-          "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
-        }
-      }
-    }
-  }
-MCPEOF
-echo ""
-echo -e "  ${YELLOW}OpenCode${NC} — paste into opencode.json in your project root:"
-echo ""
-cat <<OCEOF
-  {
-    "mcp": {
-      "condex": {
-        "type": "local",
-        "command": ["node", "$SERVER_JS"],
-        "environment": {
-          "CONDEX_SEARCH_MODE": "vector,bm25",
-          "CONDEX_BM25_MIN_SCORE": "0.3",
-          "CONDEX_VECTOR_MAX_DISTANCE": "0.95"
-        },
-        "enabled": true
-      }
-    }
-  }
-OCEOF
+echo "  This creates/updates .mcp.json (Claude Code) and opencode.json"
+echo "  (OpenCode / Dayton) — merges with existing files, never overwrites"
+echo "  other MCP entries."
 echo ""

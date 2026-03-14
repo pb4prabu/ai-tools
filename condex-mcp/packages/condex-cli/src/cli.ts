@@ -135,6 +135,51 @@ async function handleInvalidate() {
   console.log('Next run will trigger a full re-index.')
 }
 
+/**
+ * Read a JSON file, ensure the nested path exists, and upsert a key.
+ * Removes any stale `${prefix}-*` keys (e.g. condex-bm25, condex-smart).
+ * Creates the file if it doesn't exist. Never overwrites unrelated keys.
+ */
+function upsertJsonKey(
+  filePath: string,
+  parentPath: string[],
+  key: string,
+  value: unknown,
+  cleanupPrefix?: string,
+): void {
+  let root: Record<string, any> = {}
+  if (fs.existsSync(filePath)) {
+    try {
+      root = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    } catch {
+      // File exists but isn't valid JSON — start fresh
+      root = {}
+    }
+  }
+
+  // Walk/create the parent path (e.g. ["mcpServers"] or ["mcp"])
+  let current: Record<string, any> = root
+  for (const segment of parentPath) {
+    if (!current[segment] || typeof current[segment] !== 'object') {
+      current[segment] = {}
+    }
+    current = current[segment]
+  }
+
+  // Remove stale prefixed keys (condex-bm25, condex-vector, etc.)
+  if (cleanupPrefix) {
+    for (const k of Object.keys(current)) {
+      if (k.startsWith(cleanupPrefix + '-')) {
+        delete current[k]
+      }
+    }
+  }
+
+  // Set the key
+  current[key] = value
+  fs.writeFileSync(filePath, JSON.stringify(root, null, 2) + '\n')
+}
+
 async function handleSetup() {
   const targetPath = args[1] ? path.resolve(args[1]) : process.cwd()
 
@@ -154,61 +199,34 @@ async function handleSetup() {
     }
   }
 
-  // Generate mcp.json (Claude Code / generic MCP format)
-  const mcpConfig = {
-    mcpServers: {
-      condex: {
-        command: 'node',
-        args: [serverPath],
-        env: {
-          CONDEX_SEARCH_MODE: 'vector,bm25',
-          CONDEX_BM25_MIN_SCORE: '0.3',
-          CONDEX_VECTOR_MAX_DISTANCE: '0.95',
-        },
-      },
+  // --- .mcp.json (Claude Code) ---
+  const condexMcpEntry = {
+    command: 'node',
+    args: [serverPath],
+    env: {
+      CONDEX_SEARCH_MODE: 'vector,bm25',
+      CONDEX_BM25_MIN_SCORE: '0.3',
+      CONDEX_VECTOR_MAX_DISTANCE: '0.95',
     },
   }
-
-  const mcpPath = path.join(targetPath, 'mcp.json')
-  fs.writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + '\n')
-  console.log(`Created: ${mcpPath}`)
-
-  // Also generate .mcp.json (Claude Code project-level config)
   const dotMcpPath = path.join(targetPath, '.mcp.json')
-  fs.writeFileSync(dotMcpPath, JSON.stringify(mcpConfig, null, 2) + '\n')
-  console.log(`Created: ${dotMcpPath}`)
+  upsertJsonKey(dotMcpPath, ['mcpServers'], 'condex', condexMcpEntry, 'condex')
+  console.log(`${fs.existsSync(dotMcpPath) ? 'Updated' : 'Created'}: ${dotMcpPath}`)
 
-  // Clean up old opencode.json if it has condex entries
-  const opencodePath = path.join(targetPath, 'opencode.json')
-  if (fs.existsSync(opencodePath)) {
-    try {
-      const existing = JSON.parse(fs.readFileSync(opencodePath, 'utf8'))
-      // Replace all condex-* entries with a single condex entry
-      if (existing.mcp) {
-        const nonCondex: Record<string, any> = {}
-        for (const [key, val] of Object.entries(existing.mcp)) {
-          if (!key.startsWith('condex')) {
-            nonCondex[key] = val
-          }
-        }
-        nonCondex.condex = {
-          type: 'local',
-          command: ['node', serverPath],
-          environment: {
-            CONDEX_SEARCH_MODE: 'vector,bm25',
-            CONDEX_BM25_MIN_SCORE: '0.3',
-            CONDEX_VECTOR_MAX_DISTANCE: '0.95',
-          },
-          enabled: true,
-        }
-        existing.mcp = nonCondex
-        fs.writeFileSync(opencodePath, JSON.stringify(existing, null, 2) + '\n')
-        console.log(`Updated: ${opencodePath} (replaced condex-bm25/vector/hybrid/smart with single condex)`)
-      }
-    } catch {
-      // opencode.json exists but isn't valid JSON — skip
-    }
+  // --- opencode.json (OpenCode / Dayton) ---
+  const condexOcEntry = {
+    type: 'local',
+    command: ['node', serverPath],
+    environment: {
+      CONDEX_SEARCH_MODE: 'vector,bm25',
+      CONDEX_BM25_MIN_SCORE: '0.3',
+      CONDEX_VECTOR_MAX_DISTANCE: '0.95',
+    },
+    enabled: true,
   }
+  const opencodePath = path.join(targetPath, 'opencode.json')
+  upsertJsonKey(opencodePath, ['mcp'], 'condex', condexOcEntry, 'condex')
+  console.log(`${fs.existsSync(opencodePath) ? 'Updated' : 'Created'}: ${opencodePath}`)
 
   // Check vector readiness
   console.log(`\nServer: ${serverPath}`)
@@ -282,7 +300,7 @@ function printHelp() {
 Condex CLI — Local-first code index for AI agents
 
 Usage:
-  condex setup [path]          Generate mcp.json for a project (unified, no mode selection)
+  condex setup [path]          Generate .mcp.json + opencode.json (merges if exists)
   condex index [path]          Index a project (default: current directory)
   condex index [path] --full   Force full re-index
   condex status [path]         Show index status
@@ -290,8 +308,8 @@ Usage:
   condex help                  Show this help
 
 Examples:
-  condex setup .               Generate mcp.json in current directory
-  condex setup ~/my-project    Generate mcp.json in a specific project
+  condex setup .               Add condex MCP config to current directory
+  condex setup ~/my-project    Add condex MCP config to a specific project
   condex index .               Index current directory
   condex status                Show status of current directory
 `.trim())
