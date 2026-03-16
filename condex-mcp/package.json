@@ -6,7 +6,12 @@
     "packages/condex-java",
     "packages/condex-cli"
   ],
+  "engines": {
+    "node": ">=18",
+    "npm": ">=9"
+  },
   "scripts": {
+    "preinstall": "node scripts/check-prerequisites.js",
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/condex-core"
