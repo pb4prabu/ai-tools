@@ -173,71 +173,69 @@ if (!pythonPass) {
 
 // --- Network sandbox (Layer 3: OS-level outbound block) ---
 const platform = process.platform;
-let sandboxCmd = null;
 let sandboxVersion = null;
-let sandboxPass = false;
-let sandboxFix = null;
+let sandboxAvailable = false;
 
 if (platform === "darwin") {
-  sandboxCmd = "sandbox-exec";
   if (hasCommand("sandbox-exec")) {
-    sandboxVersion = "installed (macOS built-in)";
-    sandboxPass = true;
+    // Test if sandbox-exec actually works (enterprise MDM can block it)
+    try {
+      execSync(`sandbox-exec -p "(version 1)(allow default)" ${process.execPath} -e "process.exit(0)"`, { stdio: "pipe", timeout: 3000 });
+      sandboxVersion = "sandbox-exec (working)";
+      sandboxAvailable = true;
+    } catch {
+      sandboxVersion = yellow("sandbox-exec installed but blocked (MDM/enterprise restriction)");
+    }
   } else {
-    sandboxFix = "sandbox-exec is part of macOS — reinstall Command Line Tools: xcode-select --install";
+    sandboxVersion = yellow("sandbox-exec not found");
   }
 } else if (platform === "linux") {
-  sandboxCmd = "unshare";
   if (hasCommand("unshare")) {
-    const raw = getCommandVersion("unshare");
-    if (raw) {
-      const match = raw.match(/(\d+\.\d+[\.\d]*)/);
-      sandboxVersion = match ? `v${match[1]}` : "installed";
-    } else {
-      sandboxVersion = "installed";
+    try {
+      execSync(`unshare --net ${process.execPath} -e "process.exit(0)"`, { stdio: "pipe", timeout: 3000 });
+      sandboxVersion = "unshare --net (working)";
+      sandboxAvailable = true;
+    } catch {
+      sandboxVersion = yellow("unshare installed but needs root/CAP_SYS_ADMIN");
     }
-    sandboxPass = true;
   } else {
-    sandboxFix = "sudo apt-get install -y util-linux";
+    sandboxVersion = yellow("unshare not found");
   }
 } else {
-  // Windows — no OS-level sandbox, Layer 1+2 only
-  sandboxCmd = "OS sandbox";
-  sandboxVersion = yellow("not available on Windows (Layer 1+2 still active)");
-  sandboxPass = true; // non-blocking — Layer 1+2 still protect
+  sandboxVersion = yellow("not available on " + platform);
 }
 
+// Sandbox is always "pass" — it's optional, Layer 2 + 3b protect regardless
 logCheck(
-  "Network sandbox  (Layer 3: OS-level outbound block)",
+  "Network sandbox  (Layer 3: OS-level — optional)",
   "any",
-  sandboxVersion,
-  sandboxPass,
-  sandboxFix
+  sandboxAvailable ? green(sandboxVersion) : sandboxVersion,
+  true, // never fail — fallback exists
+  null
 );
-if (!sandboxPass) {
-  errors.push("Network sandbox");
+
+if (!sandboxAvailable) {
+  console.log(`         ${dim("fallback:")} DNS + proxy poisoning (Layer 3b) will be used instead`);
+  console.log();
 }
 
 // --- Network block verification (quick smoke test) ---
 let netBlockPass = false;
 let netBlockResult = null;
 try {
-  // Spawn a child process that activates the network guard and tries to connect
   const testScript = `
     const net = require('net');
-    const origConnect = net.Socket.prototype.connect;
-    // Monkey-patch like network-guard.ts does
     net.Socket.prototype.connect = function() { throw new Error('NETWORK_BLOCKED'); };
     try {
       const s = new net.Socket();
       s.connect(80, '1.1.1.1');
-      process.exit(1); // should not reach here
+      process.exit(1);
     } catch (e) {
       if (e.message === 'NETWORK_BLOCKED') process.exit(0);
       process.exit(1);
     }
   `;
-  execSync(`node -e "${testScript.replace(/\n/g, " ")}"`, { stdio: "pipe", timeout: 5000 });
+  execSync(`${process.execPath} -e "${testScript.replace(/\n/g, " ")}"`, { stdio: "pipe", timeout: 5000 });
   netBlockPass = true;
   netBlockResult = "Layer 2 monkey-patch blocks connections";
 } catch {
@@ -257,10 +255,11 @@ if (!netBlockPass) {
 
 // --- Summary ---
 console.log(dim("  ─────────────────────────────────────────────"));
-console.log(`\n  ${dim("Network isolation: 3-layer defense")}`);
-console.log(`  ${dim("  Layer 1: Env vars (TRANSFORMERS_OFFLINE=1)")}`);
-console.log(`  ${dim("  Layer 2: Node.js API monkey-patch (net, http, https, fetch, dgram)")}`);
-console.log(`  ${dim(`  Layer 3: OS sandbox (${platform === "darwin" ? "sandbox-exec" : platform === "linux" ? "unshare --net" : "N/A — Windows"})`)}`);
+console.log(`\n  ${dim("Network isolation: 4-layer defense")}`);
+console.log(`  ${dim("  Layer 1:  Env vars (TRANSFORMERS_OFFLINE=1)")}`);
+console.log(`  ${dim("  Layer 2:  Node.js API monkey-patch (net, http, https, fetch, dgram, dns)")}`);
+console.log(`  ${dim(`  Layer 3:  OS sandbox (${sandboxAvailable ? (platform === "darwin" ? "sandbox-exec ✔" : "unshare --net ✔") : "unavailable — skipped"})`)}`);
+console.log(`  ${dim(`  Layer 3b: DNS + proxy poisoning (${sandboxAvailable ? "active as backup" : "active as primary"})`)}`);
 console.log();
 
 if (errors.length > 0) {

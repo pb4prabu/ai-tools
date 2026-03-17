@@ -5,16 +5,17 @@
  * macOS: sandbox-exec -p '(version 1)(allow default)(deny network-outbound)' node server.js
  * Linux: unshare --net node server.js
  *
- * The re-exec inherits stdin/stdout/stderr so MCP stdio transport works.
- * A sentinel env var (CONDEX_SANDBOXED=1) prevents infinite re-exec loops.
+ * If sandbox-exec / unshare fails (e.g. enterprise MDM blocking it),
+ * falls back gracefully — Layer 1+2 + DNS/proxy poisoning still protect.
  *
+ * A sentinel env var (CONDEX_SANDBOXED=1) prevents infinite re-exec loops.
  * Set CONDEX_NO_SANDBOX=1 to skip (e.g. for debugging).
  *
  * Returns true if this is the parent (caller should stop and wait).
- * Returns false if this is the sandboxed child or sandbox was skipped.
+ * Returns false if this is the sandboxed child, sandbox was skipped, or sandbox failed.
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 const SENTINEL = 'CONDEX_SANDBOXED'
 
@@ -34,30 +35,72 @@ export function ensureOsSandbox(): boolean {
   const platform = process.platform
 
   if (platform === 'darwin') {
-    launchSandboxedChild('sandbox-exec', [
-      '-p', '(version 1)(allow default)(deny network-outbound)',
-      process.execPath, ...process.argv.slice(1),
-    ])
-    return true // parent — stop here
+    // Test if sandbox-exec actually works on this machine
+    if (canUseSandboxExec()) {
+      launchSandboxedChild('sandbox-exec', [
+        '-p', '(version 1)(allow default)(deny network-outbound)',
+        process.execPath, ...process.argv.slice(1),
+      ])
+      return true
+    }
+    console.error(`[condex] ⚠ sandbox-exec not available (enterprise MDM or SIP restriction)`)
+    console.error(`[condex] ⚠ Falling back to Layer 1+2 + DNS/proxy poisoning`)
+    return false
   }
 
   if (platform === 'linux') {
-    launchSandboxedChild('unshare', [
-      '--net',
-      process.execPath, ...process.argv.slice(1),
-    ])
-    return true // parent — stop here
+    if (canUseUnshare()) {
+      launchSandboxedChild('unshare', [
+        '--net',
+        process.execPath, ...process.argv.slice(1),
+      ])
+      return true
+    }
+    console.error(`[condex] ⚠ unshare --net not available (needs root or CAP_SYS_ADMIN)`)
+    console.error(`[condex] ⚠ Falling back to Layer 1+2 + DNS/proxy poisoning`)
+    return false
   }
 
-  console.error(`[condex] ⚠ OS sandbox not available on ${platform} — relying on Layer 1+2 only`)
+  console.error(`[condex] ⚠ OS sandbox not available on ${platform} — relying on Layer 1+2 + DNS/proxy poisoning`)
   return false
+}
+
+/**
+ * Probe whether sandbox-exec works on this machine.
+ * Enterprise MDM (Jamf, Kandji, etc.) can block sandbox profiles.
+ */
+function canUseSandboxExec(): boolean {
+  try {
+    const result = spawnSync('sandbox-exec', [
+      '-p', '(version 1)(allow default)',
+      process.execPath, '-e', 'process.exit(0)',
+    ], { timeout: 3000, stdio: 'pipe' })
+    return result.status === 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Probe whether unshare --net works (needs root or user namespace support).
+ */
+function canUseUnshare(): boolean {
+  try {
+    const result = spawnSync('unshare', [
+      '--net',
+      process.execPath, '-e', 'process.exit(0)',
+    ], { timeout: 3000, stdio: 'pipe' })
+    return result.status === 0
+  } catch {
+    return false
+  }
 }
 
 function launchSandboxedChild(command: string, args: string[]): void {
   console.error(`[condex] Re-launching inside OS sandbox: ${command}`)
 
   const child = spawn(command, args, {
-    stdio: 'inherit', // pass through stdin/stdout/stderr for MCP transport
+    stdio: 'inherit',
     env: { ...process.env, [SENTINEL]: '1' },
   })
 
@@ -77,7 +120,6 @@ function launchSandboxedChild(command: string, args: string[]): void {
     }
   })
 
-  // Forward signals to the sandboxed child
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.on(sig, () => child.kill(sig))
   }
