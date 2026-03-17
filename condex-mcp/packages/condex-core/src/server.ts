@@ -1,13 +1,47 @@
 #!/usr/bin/env node
 
-// Block outbound network unless vector/hybrid is in the search chain (needs model download)
+// ── FIRST THING: ensure OS-level network sandbox ──────────────
+// If not already sandboxed, re-exec inside sandbox-exec (macOS) or unshare --net (Linux).
+// This MUST happen before ANY other code runs.
+import { ensureOsSandbox } from './security/sandbox-launcher.js'
+ensureOsSandbox()
+
+// ── SECOND: block all outbound network at Node.js level ───────
 import { blockOutboundNetwork } from './security/network-guard.js'
+blockOutboundNetwork()
+
+// Now safe to proceed — network is sealed.
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+
 const rawSearchMode = process.env.CONDEX_SEARCH_MODE ?? 'vector,bm25'
-const needsNetwork = rawSearchMode.includes('vector') || rawSearchMode.includes('hybrid')
-if (!needsNetwork) {
-  blockOutboundNetwork()
-} else {
-  console.error(`[condex] Network guard DISABLED (vector/hybrid in chain — model download may be needed)`)
+const needsVector = rawSearchMode.includes('vector') || rawSearchMode.includes('hybrid')
+
+// Vector mode: verify model is cached (can't download — network is blocked)
+if (needsVector) {
+  const cacheDir = process.env.CONDEX_MODEL_CACHE_DIR
+    || join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.condex', 'models')
+  const modelDir = join(cacheDir, 'nomic-ai', 'nomic-embed-text-v1.5')
+  const requiredFiles = [
+    'config.json',
+    'tokenizer.json',
+    'tokenizer_config.json',
+    join('onnx', 'model_quantized.onnx'),
+  ]
+  const missing = requiredFiles.filter(f => !existsSync(join(modelDir, f)))
+  if (missing.length > 0) {
+    console.error(`[condex] FATAL: Vector mode requires the embedding model, but it is not cached.`)
+    console.error(`[condex]   Missing: ${missing.join(', ')}`)
+    console.error(`[condex]   Expected at: ${modelDir}`)
+    console.error(`[condex]`)
+    console.error(`[condex]   Run one of these to download the model first:`)
+    console.error(`[condex]     npm run setup`)
+    console.error(`[condex]     condex setup <project-path>`)
+    console.error(`[condex]`)
+    console.error(`[condex]   Network access is NEVER allowed at runtime — models must be pre-downloaded.`)
+    process.exit(1)
+  }
+  console.error(`[condex] Vector model cached at ${modelDir}`)
 }
 
 import fs from 'node:fs'

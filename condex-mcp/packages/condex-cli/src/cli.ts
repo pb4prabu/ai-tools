@@ -154,10 +154,14 @@ async function handleSetup() {
     }
   }
 
+  // Use full absolute path to node — on some machines the MCP client
+  // runs in a shell context where 'node' is not in PATH.
+  const nodePath = process.execPath
+
   const mcpJson = {
     mcpServers: {
       condex: {
-        command: 'node',
+        command: nodePath,
         args: [serverPath],
         env: {
           CONDEX_SEARCH_MODE: 'vector,bm25',
@@ -172,7 +176,7 @@ async function handleSetup() {
     mcp: {
       condex: {
         type: 'local',
-        command: ['node', serverPath],
+        command: [nodePath, serverPath],
         environment: {
           CONDEX_SEARCH_MODE: 'vector,bm25',
           CONDEX_BM25_MIN_SCORE: '0.3',

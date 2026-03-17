@@ -47,8 +47,9 @@ export async function getEmbedder(): Promise<Embedder> {
   // Dynamic import — only loaded when vector search is enabled
   const { pipeline, env } = await import('@huggingface/transformers')
 
-  // Use local cache, no remote loading indicator
+  // Force offline — model must be pre-downloaded, no network at runtime
   env.cacheDir = getCacheDir()
+  env.allowRemoteModels = false
 
   const extractor = await pipeline('feature-extraction', 'nomic-ai/nomic-embed-text-v1.5', {
     dtype: 'q8' as any,         // quantized for speed

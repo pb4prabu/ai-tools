@@ -7,11 +7,17 @@
     "packages/condex-multi-lang",
     "packages/condex-cli"
   ],
+  "engines": {
+    "node": ">=18",
+    "npm": ">=9"
+  },
   "scripts": {
-    "setup": "bash condex-setup.sh",
-    "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces --if-present",
-    "dev": "npm run dev --workspace=packages/condex-core"
+    "preinstall": "node scripts/check-prerequisites.js",
+    "check": "node scripts/check-prerequisites.js",
+    "setup": "npm run check && bash condex-setup.sh",
+    "build": "npm run check && npm run build --workspaces",
+    "test": "npm run check && npm run test --workspaces --if-present",
+    "dev": "npm run check && npm run dev --workspace=packages/condex-core"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
