@@ -47,7 +47,8 @@ if [ "$NODE_MAJOR" -lt "$MIN_NODE_MAJOR" ]; then
   fail "Node.js $NODE_VERSION found, but >= $MIN_NODE_MAJOR required"
   exit 1
 fi
-ok "Node.js $NODE_VERSION"
+NODE_BIN=$(command -v node)
+ok "Node.js $NODE_VERSION ($NODE_BIN)"
 
 # ── Step 2: Check npm ─────────────────────────────
 step "2/6" "Checking npm..."
@@ -136,7 +137,7 @@ cat > "$MCP_SAMPLE" <<MCPEOF
 {
   "mcpServers": {
     "condex": {
-      "command": "node",
+      "command": "$NODE_BIN",
       "args": ["$SERVER_JS"],
       "env": {
         "CONDEX_SEARCH_MODE": "vector,bm25",
@@ -156,7 +157,7 @@ cat > "$OC_SAMPLE" <<OCEOF
   "mcp": {
     "condex": {
       "type": "local",
-      "command": ["node", "$SERVER_JS"],
+      "command": ["$NODE_BIN", "$SERVER_JS"],
       "environment": {
         "CONDEX_SEARCH_MODE": "vector,bm25",
         "CONDEX_BM25_MIN_SCORE": "0.3",
