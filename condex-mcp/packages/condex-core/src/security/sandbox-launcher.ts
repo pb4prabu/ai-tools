@@ -18,11 +18,18 @@
 import { spawn, spawnSync } from 'node:child_process'
 
 const SENTINEL = 'CONDEX_SANDBOXED'
+const SANDBOX_FAILED = 'CONDEX_SANDBOX_FAILED'
 
 export function ensureOsSandbox(): boolean {
   // Already sandboxed (re-exec'd child) — continue normally
   if (process.env[SENTINEL] === '1') {
     console.error(`[condex] OS sandbox active (${process.platform === 'darwin' ? 'sandbox-exec' : 'unshare --net'})`)
+    return false
+  }
+
+  // Sandbox was attempted but failed — parent is re-launching us without sandbox
+  if (process.env[SANDBOX_FAILED] === '1') {
+    console.error(`[condex] ⚠ OS sandbox failed — running with Layer 1+2 + DNS/proxy poisoning only`)
     return false
   }
 
@@ -35,13 +42,11 @@ export function ensureOsSandbox(): boolean {
   const platform = process.platform
 
   if (platform === 'darwin') {
-    // Test if sandbox-exec actually works on this machine
     if (canUseSandboxExec()) {
-      launchSandboxedChild('sandbox-exec', [
+      return launchSandboxedChild('sandbox-exec', [
         '-p', '(version 1)(allow default)(deny network-outbound)',
         process.execPath, ...process.argv.slice(1),
       ])
-      return true
     }
     console.error(`[condex] ⚠ sandbox-exec not available (enterprise MDM or SIP restriction)`)
     console.error(`[condex] ⚠ Falling back to Layer 1+2 + DNS/proxy poisoning`)
@@ -50,11 +55,10 @@ export function ensureOsSandbox(): boolean {
 
   if (platform === 'linux') {
     if (canUseUnshare()) {
-      launchSandboxedChild('unshare', [
+      return launchSandboxedChild('unshare', [
         '--net',
         process.execPath, ...process.argv.slice(1),
       ])
-      return true
     }
     console.error(`[condex] ⚠ unshare --net not available (needs root or CAP_SYS_ADMIN)`)
     console.error(`[condex] ⚠ Falling back to Layer 1+2 + DNS/proxy poisoning`)
@@ -67,15 +71,16 @@ export function ensureOsSandbox(): boolean {
 
 /**
  * Probe whether sandbox-exec works on this machine.
+ * Tests with the EXACT deny-network profile we'll actually use.
  * Enterprise MDM (Jamf, Kandji, etc.) can block sandbox profiles.
  */
 function canUseSandboxExec(): boolean {
   try {
     const result = spawnSync('sandbox-exec', [
-      '-p', '(version 1)(allow default)',
+      '-p', '(version 1)(allow default)(deny network-outbound)',
       process.execPath, '-e', 'process.exit(0)',
-    ], { timeout: 3000, stdio: 'pipe' })
-    return result.status === 0
+    ], { timeout: 5000, stdio: 'pipe' })
+    return result.status === 0 && !result.error
   } catch {
     return false
   }
@@ -89,26 +94,74 @@ function canUseUnshare(): boolean {
     const result = spawnSync('unshare', [
       '--net',
       process.execPath, '-e', 'process.exit(0)',
-    ], { timeout: 3000, stdio: 'pipe' })
-    return result.status === 0
+    ], { timeout: 5000, stdio: 'pipe' })
+    return result.status === 0 && !result.error
   } catch {
     return false
   }
 }
 
-function launchSandboxedChild(command: string, args: string[]): void {
+/**
+ * Launch the server inside an OS sandbox. If the sandboxed child fails
+ * within the first 2 seconds (sandbox rejected), fall back to running
+ * without sandbox by re-launching with CONDEX_SANDBOX_FAILED=1.
+ *
+ * Returns true if this is the parent (caller should stop and wait).
+ */
+function launchSandboxedChild(command: string, args: string[]): boolean {
   console.error(`[condex] Re-launching inside OS sandbox: ${command}`)
 
+  const startTime = Date.now()
   const child = spawn(command, args, {
     stdio: 'inherit',
     env: { ...process.env, [SENTINEL]: '1' },
   })
 
   child.on('error', (err: NodeJS.ErrnoException) => {
-    console.error(`[condex] FATAL: Failed to launch OS sandbox: ${err.message}`)
-    if (err.code === 'ENOENT') {
-      console.error(`[condex]   '${command}' not found. Install it or set CONDEX_NO_SANDBOX=1 to skip.`)
+    console.error(`[condex] ⚠ OS sandbox launch failed: ${err.message}`)
+    launchWithoutSandbox()
+  })
+
+  child.on('exit', (code, signal) => {
+    const elapsed = Date.now() - startTime
+
+    // If child died within 2 seconds with non-zero exit, sandbox likely rejected it
+    if (code !== 0 && !signal && elapsed < 2000) {
+      console.error(`[condex] ⚠ OS sandbox child exited with code ${code} after ${elapsed}ms — sandbox may have been rejected`)
+      launchWithoutSandbox()
+      return
     }
+
+    // Normal exit — propagate
+    if (signal) {
+      process.kill(process.pid, signal)
+    } else {
+      process.exit(code ?? 1)
+    }
+  })
+
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.on(sig, () => child.kill(sig))
+  }
+
+  return true
+}
+
+/**
+ * Re-launch the server WITHOUT the OS sandbox.
+ * Sets CONDEX_SANDBOX_FAILED=1 so the child knows to skip sandbox and continue.
+ */
+function launchWithoutSandbox(): void {
+  console.error(`[condex] ⚠ Falling back — re-launching without OS sandbox`)
+  console.error(`[condex] ⚠ Layer 1+2 + DNS/proxy poisoning will still protect`)
+
+  const child = spawn(process.execPath, process.argv.slice(1), {
+    stdio: 'inherit',
+    env: { ...process.env, [SANDBOX_FAILED]: '1' },
+  })
+
+  child.on('error', (err) => {
+    console.error(`[condex] FATAL: Failed to re-launch server: ${err.message}`)
     process.exit(1)
   })
 

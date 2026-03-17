@@ -180,7 +180,7 @@ if (platform === "darwin") {
   if (hasCommand("sandbox-exec")) {
     // Test if sandbox-exec actually works (enterprise MDM can block it)
     try {
-      execSync(`sandbox-exec -p "(version 1)(allow default)" ${process.execPath} -e "process.exit(0)"`, { stdio: "pipe", timeout: 3000 });
+      execSync(`sandbox-exec -p "(version 1)(allow default)(deny network-outbound)" ${process.execPath} -e "process.exit(0)"`, { stdio: "pipe", timeout: 5000 });
       sandboxVersion = "sandbox-exec (working)";
       sandboxAvailable = true;
     } catch {
