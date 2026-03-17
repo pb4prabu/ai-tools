@@ -13,6 +13,7 @@ With Condex:     Agent queries 4 symbols  →  6,588 tokens (91.8% saved)
 
 ## Table of Contents
 
+- [Prerequisites](#prerequisites)
 - [Setup](#setup)
 - [Agent Instructions](#agent-instructions)
 - [Benchmark Your Project](#benchmark-your-project)
@@ -26,6 +27,27 @@ With Condex:     Agent queries 4 symbols  →  6,588 tokens (91.8% saved)
 - [Security](#security)
 - [Tests & Benchmarks](#tests--benchmarks)
 - [Known Limitations](#known-limitations)
+
+---
+
+## Prerequisites
+
+| Requirement | Minimum | Purpose |
+|-------------|---------|---------|
+| Node.js | >= 18 | Runtime |
+| npm | >= 9 | Package manager |
+| C++ compiler | any (`clang++`, `g++`) | Native modules (better-sqlite3, tree-sitter) |
+| make | any | Native module compilation |
+| Python | any (`python3`) | node-gyp builds |
+
+**Optional (auto-detected):**
+
+| Tool | Platform | Purpose |
+|------|----------|---------|
+| `sandbox-exec` | macOS | OS-level network sandbox (Layer 3) |
+| `unshare` | Linux | OS-level network sandbox (Layer 3) |
+
+Run `node scripts/check-prerequisites.js` to verify your environment. This check runs automatically before every `npm run setup`, `build`, `test`, and `dev`.
 
 ---
 
@@ -456,12 +478,39 @@ SQLite is checked first on startup. JSON is only loaded if the DB is empty.
 
 ## Security
 
-**Zero-trust design**: no network access (BM25 mode), restricted filesystem, sandboxed execution.
+**Zero-trust design**: zero outbound network in all modes, restricted filesystem, sandboxed execution.
 
-### Network Guard
+### 4-Layer Network Isolation
 
-- **BM25-only chain**: All outbound blocked (env vars + Node.js monkey-patch + OS sandbox)
-- **Vector/hybrid chain**: Network allowed for model download only; fully offline after model is cached
+The server has **zero outbound network connectivity** by design. All 4 layers activate automatically on startup — no flags needed.
+
+```
+Layer 1:  Environment variables (library-level)
+          TRANSFORMERS_OFFLINE=1, HF_HUB_DISABLE_TELEMETRY=1
+          Tells ML libraries to stay offline.
+
+Layer 2:  Node.js API monkey-patch (process-level)
+          net, tls, http, https, fetch, dgram, dns → throw NETWORK_BLOCKED
+          Blocks all networking APIs. Server refuses to start if any leak.
+
+Layer 3:  OS-level sandbox (kernel-level, automatic)
+          macOS: sandbox-exec -p '(deny network-outbound)'
+          Linux: unshare --net
+          Auto-sandboxes on startup via process re-exec.
+
+Layer 3b: DNS + proxy poisoning (fallback for enterprise environments)
+          dns.lookup → 0.0.0.0 (black hole)
+          HTTP_PROXY/HTTPS_PROXY → 127.0.0.1:1 (dead port)
+          Catches native addons that bypass Layer 2.
+```
+
+**Enterprise environments**: If `sandbox-exec` is blocked by MDM (Jamf, Kandji, etc.), the server detects this automatically and falls back to Layer 3b. No configuration needed.
+
+**Verification**: On startup, the server probes every patched API and verifies env vars. If any check fails, the server **refuses to start**. Layer 3 is tested via a real TCP probe in a child process (informational only — Layers 1+2+3b protect regardless).
+
+**Debugging**: Set `CONDEX_NO_SANDBOX=1` to skip the OS sandbox (Layer 3 only). Layers 1, 2, and 3b remain active.
+
+**Vector mode**: The embedding model must be pre-downloaded via `npm run setup` or `bash condex-setup.sh`. The server blocks all network access including model downloads at runtime (`env.allowRemoteModels = false`).
 
 ### Filesystem Guard (SafeFS)
 
@@ -477,7 +526,7 @@ Silence is safer than wrong context. If the search chain exhausts all modes with
 ## Tests & Benchmarks
 
 ```bash
-npm test                                                       # 126 unit tests
+npm test                                                       # 131 unit tests
 npx vitest run --reporter=verbose                              # Verbose output
 npx tsx packages/condex-core/src/scripts/realworld-test.ts     # 19 integration tests (BM25 + vector + hybrid)
 npx tsx benchmark/generate-sample.ts && npx tsx benchmark/bench.ts --vector  # Benchmark (15 queries, 4 modes)
